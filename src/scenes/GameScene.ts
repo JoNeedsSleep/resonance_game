@@ -167,7 +167,7 @@ export class GameScene extends Phaser.Scene {
 
     this.remotePlayer = this.physics.add.sprite(remoteSpawn.x, remoteSpawn.y, remoteTexture);
     this.remotePlayer.setScale(PIXEL_SCALE);
-    this.remotePlayer.body!.allowGravity = false; // Remote player position is synced
+    (this.remotePlayer.body as Phaser.Physics.Arcade.Body).allowGravity = false; // Remote player position is synced
 
     // Collisions
     this.physics.add.collider(this.localPlayer, this.platforms);
