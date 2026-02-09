@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS } from '../types';
 import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload } from '../types';
-import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
 import { levels } from '../levels';
@@ -184,11 +184,13 @@ export class GameScene extends Phaser.Scene {
         { key: PentatonicNote.Yu, label: NOTE_LABELS[PentatonicNote.Yu] },
       ];
 
-      const noteStartX = GAME_WIDTH - 280;
+      const noteSpacing = IS_PORTRAIT ? 44 : 52;
+      const noteBlockWidth = (notes.length - 1) * noteSpacing;
+      const noteStartX = GAME_WIDTH - 40 - noteBlockWidth;
       const noteY = GAME_HEIGHT - 30;
 
       notes.forEach((note, i) => {
-        const nx = noteStartX + i * 52;
+        const nx = noteStartX + i * noteSpacing;
         const circle = this.add.circle(nx, noteY, 22, 0xffd700, 0.25)
           .setScrollFactor(0).setDepth(1000).setInteractive();
         const label = this.add.text(nx, noteY, note.label, {
@@ -244,6 +246,20 @@ export class GameScene extends Phaser.Scene {
           this.advanceLevel();
           break;
       }
+    });
+
+    this.networkManager.onDisconnect(() => {
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Connection lost', {
+        fontSize: '24px',
+        color: '#ff6b6b',
+        fontFamily: 'monospace',
+        backgroundColor: '#1a1a2e',
+        padding: { x: 20, y: 10 },
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(2000);
+
+      this.time.delayedCall(2000, () => {
+        this.scene.start('MenuScene');
+      });
     });
   }
 

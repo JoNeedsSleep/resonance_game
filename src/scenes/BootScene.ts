@@ -15,6 +15,11 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // Set nearest-neighbor filtering on pixel art textures so they stay crisp when scaled
+    const pixelTextures = ['player1', 'player2', 'bell', 'platform', 'moongate', 'pressure_plate'];
+    for (const key of pixelTextures) {
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
     this.scene.start('MenuScene');
   }
 

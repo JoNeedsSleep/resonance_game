@@ -1,6 +1,15 @@
-/** Game dimensions — 16:9 aspect ratio */
-export const GAME_WIDTH = 960;
-export const GAME_HEIGHT = 540;
+/**
+ * Auto-detect viewport and set game dimensions to match the screen aspect ratio.
+ * The shorter side is always 540px (logical), the longer side scales proportionally.
+ */
+const BASE_SIZE = 540;
+const vw = window.innerWidth || 960;
+const vh = window.innerHeight || 540;
+const aspect = vw / vh;
+
+export const IS_PORTRAIT = vh > vw;
+export const GAME_WIDTH = IS_PORTRAIT ? BASE_SIZE : Math.round(BASE_SIZE * aspect);
+export const GAME_HEIGHT = IS_PORTRAIT ? Math.round(BASE_SIZE / aspect) : BASE_SIZE;
 
 /** Pixel art scale factor */
 export const PIXEL_SCALE = 3;
