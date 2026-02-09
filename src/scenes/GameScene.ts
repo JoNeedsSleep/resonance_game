@@ -1,21 +1,20 @@
 import Phaser from 'phaser';
-import { PlayerRole, NetworkMessageType } from '../types';
+import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS } from '../types';
 import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload } from '../types';
-import { PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
 import { levels } from '../levels';
 
 interface GameSceneData {
   role: PlayerRole;
-  roomCode: string | null;
+  networkManager: NetworkManager;
 }
 
 export class GameScene extends Phaser.Scene {
   private localPlayer!: Phaser.Physics.Arcade.Sprite;
   private remotePlayer!: Phaser.Physics.Arcade.Sprite;
   private role!: PlayerRole;
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
   private platforms!: Phaser.Physics.Arcade.StaticGroup;
   private bells!: Phaser.Physics.Arcade.StaticGroup;
@@ -33,13 +32,24 @@ export class GameScene extends Phaser.Scene {
   private pickupKey!: Phaser.Input.Keyboard.Key;
   private noteKeys: Record<string, Phaser.Input.Keyboard.Key> = {};
 
+  // Touch controls
+  private isTouchDevice = false;
+  private joystickBase: Phaser.GameObjects.Arc | null = null;
+  private joystickThumb: Phaser.GameObjects.Arc | null = null;
+  private joystickActive = false;
+  private joystickVector = { x: 0, y: 0 };
+  private joystickPointerId: number | null = null;
+  private touchJumpRequested = false;
+  private touchActionBtn: Phaser.GameObjects.Arc | null = null;
+  private noteButtons: Phaser.GameObjects.Container[] = [];
+
   constructor() {
     super({ key: 'GameScene' });
   }
 
   init(data: GameSceneData) {
     this.role = data.role;
-    this.networkManager = new NetworkManager(data.role, data.roomCode);
+    this.networkManager = data.networkManager;
     this.audioManager = new AudioManager();
   }
 
@@ -49,9 +59,15 @@ export class GameScene extends Phaser.Scene {
     this.moonGates = this.physics.add.staticGroup();
     this.pressurePlates = this.physics.add.staticGroup();
 
+    this.isTouchDevice = this.input.activePointer.wasTouch || 'ontouchstart' in window;
+
     this.setupInput();
     this.setupNetwork();
     this.loadLevel(0);
+
+    if (this.isTouchDevice) {
+      this.setupTouchControls();
+    }
   }
 
   private setupInput() {
@@ -79,6 +95,135 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  private setupTouchControls() {
+    const uiCamera = this.cameras.add(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    uiCamera.setScroll(0, 0);
+
+    // --- Virtual Joystick (left side) ---
+    const joyX = 100;
+    const joyY = GAME_HEIGHT - 100;
+    const baseRadius = 50;
+    const thumbRadius = 25;
+
+    this.joystickBase = this.add.circle(joyX, joyY, baseRadius, 0xffffff, 0.15);
+    this.joystickThumb = this.add.circle(joyX, joyY, thumbRadius, 0xffffff, 0.4);
+    this.joystickBase.setScrollFactor(0).setDepth(1000);
+    this.joystickThumb.setScrollFactor(0).setDepth(1001);
+
+    // Jump button (above joystick)
+    const jumpBtn = this.add.circle(joyX + 90, joyY - 50, 30, 0x8ecae6, 0.3)
+      .setScrollFactor(0).setDepth(1000).setInteractive();
+    this.add.text(joyX + 90, joyY - 50, '▲', {
+      fontSize: '20px', color: '#8ecae6',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+    jumpBtn.on('pointerdown', () => { this.touchJumpRequested = true; });
+
+    // Joystick touch handling — use scene-level pointer events
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // Only grab pointers on left half of screen for joystick
+      if (pointer.x < GAME_WIDTH / 2 && this.joystickPointerId === null) {
+        this.joystickActive = true;
+        this.joystickPointerId = pointer.id;
+        this.updateJoystick(pointer);
+      }
+    });
+
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (this.joystickActive && pointer.id === this.joystickPointerId) {
+        this.updateJoystick(pointer);
+      }
+    });
+
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.id === this.joystickPointerId) {
+        this.joystickActive = false;
+        this.joystickPointerId = null;
+        this.joystickVector = { x: 0, y: 0 };
+        if (this.joystickThumb && this.joystickBase) {
+          this.joystickThumb.setPosition(this.joystickBase.x, this.joystickBase.y);
+        }
+      }
+    });
+
+    // --- Action Button (right side) ---
+    const actionX = GAME_WIDTH - 80;
+    const actionY = GAME_HEIGHT - 80;
+
+    if (this.role === PlayerRole.Player1) {
+      // Strike button for Player 1
+      this.touchActionBtn = this.add.circle(actionX, actionY, 35, 0xffd700, 0.3)
+        .setScrollFactor(0).setDepth(1000).setInteractive();
+      this.add.text(actionX, actionY, '🔔', {
+        fontSize: '24px',
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+      this.touchActionBtn.on('pointerdown', () => { this.tryStrikeBell(); });
+    } else {
+      // Pickup/place button for Player 2
+      this.touchActionBtn = this.add.circle(actionX, actionY, 35, 0xe07a5f, 0.3)
+        .setScrollFactor(0).setDepth(1000).setInteractive();
+      this.add.text(actionX, actionY, 'E', {
+        fontSize: '22px', color: '#e07a5f', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+      this.touchActionBtn.on('pointerdown', () => {
+        if (this.carriedBellId) {
+          this.placeBell();
+        } else {
+          this.tryPickupBell();
+        }
+      });
+
+      // Note buttons for Player 2 (pentatonic scale)
+      const notes = [
+        { key: PentatonicNote.Gong, label: NOTE_LABELS[PentatonicNote.Gong] },
+        { key: PentatonicNote.Shang, label: NOTE_LABELS[PentatonicNote.Shang] },
+        { key: PentatonicNote.Jue, label: NOTE_LABELS[PentatonicNote.Jue] },
+        { key: PentatonicNote.Zhi, label: NOTE_LABELS[PentatonicNote.Zhi] },
+        { key: PentatonicNote.Yu, label: NOTE_LABELS[PentatonicNote.Yu] },
+      ];
+
+      const noteStartX = GAME_WIDTH - 280;
+      const noteY = GAME_HEIGHT - 30;
+
+      notes.forEach((note, i) => {
+        const nx = noteStartX + i * 52;
+        const circle = this.add.circle(nx, noteY, 22, 0xffd700, 0.25)
+          .setScrollFactor(0).setDepth(1000).setInteractive();
+        const label = this.add.text(nx, noteY, note.label, {
+          fontSize: '16px', color: '#ffd700', fontFamily: 'serif',
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+        const container = this.add.container(0, 0, [circle, label]);
+        container.setDepth(1000);
+        this.noteButtons.push(container);
+
+        circle.on('pointerdown', () => { this.playNote(note.key); });
+      });
+    }
+  }
+
+  private updateJoystick(pointer: Phaser.Input.Pointer) {
+    if (!this.joystickBase || !this.joystickThumb) return;
+
+    const baseX = this.joystickBase.x;
+    const baseY = this.joystickBase.y;
+    const maxDist = 45;
+
+    let dx = pointer.x - baseX;
+    let dy = pointer.y - baseY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > maxDist) {
+      dx = (dx / dist) * maxDist;
+      dy = (dy / dist) * maxDist;
+    }
+
+    this.joystickThumb.setPosition(baseX + dx, baseY + dy);
+    this.joystickVector = { x: dx / maxDist, y: dy / maxDist };
+  }
+
   private setupNetwork() {
     this.networkManager.onMessage((message) => {
       switch (message.type) {
@@ -100,8 +245,6 @@ export class GameScene extends Phaser.Scene {
           break;
       }
     });
-
-    this.networkManager.connect();
   }
 
   private loadLevel(index: number) {
@@ -189,29 +332,45 @@ export class GameScene extends Phaser.Scene {
 
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
 
-    // Horizontal movement
-    if (this.wasd.A?.isDown) {
+    // Touch controls (joystick)
+    if (this.isTouchDevice && this.joystickActive) {
+      body.setVelocityX(this.joystickVector.x * PLAYER_SPEED);
+      if (this.touchJumpRequested && body.blocked.down) {
+        body.setVelocityY(PLAYER_JUMP_VELOCITY);
+        this.touchJumpRequested = false;
+      }
+      return;
+    }
+
+    // Reset touch jump if using joystick but not moving
+    if (this.isTouchDevice && this.touchJumpRequested && body.blocked.down) {
+      body.setVelocityY(PLAYER_JUMP_VELOCITY);
+      this.touchJumpRequested = false;
+    }
+
+    // Keyboard movement
+    if (this.wasd?.A?.isDown) {
       body.setVelocityX(-PLAYER_SPEED);
-    } else if (this.wasd.D?.isDown) {
+    } else if (this.wasd?.D?.isDown) {
       body.setVelocityX(PLAYER_SPEED);
-    } else {
+    } else if (!this.joystickActive) {
       body.setVelocityX(0);
     }
 
-    // Jump
-    if (this.wasd.W?.isDown && body.blocked.down) {
+    // Keyboard jump
+    if (this.wasd?.W?.isDown && body.blocked.down) {
       body.setVelocityY(PLAYER_JUMP_VELOCITY);
     }
   }
 
   private handleActions() {
-    // Player 1: Strike bell
-    if (this.role === PlayerRole.Player1 && Phaser.Input.Keyboard.JustDown(this.strikeKey)) {
+    // Player 1: Strike bell (keyboard)
+    if (this.role === PlayerRole.Player1 && this.strikeKey && Phaser.Input.Keyboard.JustDown(this.strikeKey)) {
       this.tryStrikeBell();
     }
 
-    // Player 2: Pick up / place bell
-    if (this.role === PlayerRole.Player2 && Phaser.Input.Keyboard.JustDown(this.pickupKey)) {
+    // Player 2: Pick up / place bell (keyboard)
+    if (this.role === PlayerRole.Player2 && this.pickupKey && Phaser.Input.Keyboard.JustDown(this.pickupKey)) {
       if (this.carriedBellId) {
         this.placeBell();
       } else {
@@ -219,7 +378,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Player 2: Play notes
+    // Player 2: Play notes (keyboard)
     if (this.role === PlayerRole.Player2) {
       for (const [note, key] of Object.entries(this.noteKeys)) {
         if (Phaser.Input.Keyboard.JustDown(key)) {

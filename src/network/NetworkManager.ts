@@ -15,10 +15,28 @@ export class NetworkManager {
   private roomCode: string | null;
   private messageHandlers: MessageHandler[] = [];
   private connected = false;
+  private onOpenCallback: ((id: string) => void) | null = null;
+  private onConnectCallback: (() => void) | null = null;
+  private onErrorCallback: ((err: Error) => void) | null = null;
 
   constructor(role: PlayerRole, roomCode: string | null) {
     this.role = role;
     this.roomCode = roomCode;
+  }
+
+  /** Called when peer opens and receives an ID (room code for Player 1) */
+  onOpen(callback: (id: string) => void) {
+    this.onOpenCallback = callback;
+  }
+
+  /** Called when the two players are connected */
+  onConnected(callback: () => void) {
+    this.onConnectCallback = callback;
+  }
+
+  /** Called on connection error */
+  onError(callback: (err: Error) => void) {
+    this.onErrorCallback = callback;
   }
 
   onMessage(handler: MessageHandler) {
@@ -57,9 +75,7 @@ export class NetworkManager {
     this.peer = new Peer();
 
     this.peer.on('open', (id) => {
-      // The peer ID is the room code
-      // eslint-disable-next-line no-console
-      console.log(`Room code: ${id}`);
+      this.onOpenCallback?.(id);
     });
 
     this.peer.on('connection', (conn) => {
@@ -70,6 +86,7 @@ export class NetworkManager {
     this.peer.on('error', (err) => {
       // eslint-disable-next-line no-console
       console.error('PeerJS error:', err);
+      this.onErrorCallback?.(err);
     });
   }
 
@@ -78,7 +95,8 @@ export class NetworkManager {
 
     this.peer = new Peer();
 
-    this.peer.on('open', () => {
+    this.peer.on('open', (id) => {
+      this.onOpenCallback?.(id);
       const conn = this.peer!.connect(this.roomCode!);
       this.connection = conn;
       this.setupConnection(conn);
@@ -87,12 +105,14 @@ export class NetworkManager {
     this.peer.on('error', (err) => {
       // eslint-disable-next-line no-console
       console.error('PeerJS error:', err);
+      this.onErrorCallback?.(err);
     });
   }
 
   private setupConnection(conn: DataConnection) {
     conn.on('open', () => {
       this.connected = true;
+      this.onConnectCallback?.();
     });
 
     conn.on('data', (data) => {
