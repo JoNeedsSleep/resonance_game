@@ -7,7 +7,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  base: './',
+  base: '/resonance_game/',
   build: {
     outDir: 'dist',
     sourcemap: true,
