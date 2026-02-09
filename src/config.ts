@@ -2,7 +2,7 @@
  * Auto-detect viewport and set game dimensions to match the screen aspect ratio.
  * The shorter side is always 540px (logical), the longer side scales proportionally.
  */
-const BASE_SIZE = 540;
+const BASE_SIZE = 720;
 const vw = window.innerWidth || 960;
 const vh = window.innerHeight || 540;
 const aspect = vw / vh;

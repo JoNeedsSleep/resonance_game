@@ -40,7 +40,9 @@ export class GameScene extends Phaser.Scene {
   private joystickVector = { x: 0, y: 0 };
   private joystickPointerId: number | null = null;
   private touchJumpRequested = false;
+  private joystickJumpFired = false;
   private touchActionBtn: Phaser.GameObjects.Arc | null = null;
+  private touchActionLabel: Phaser.GameObjects.Text | null = null;
   private noteButtons: Phaser.GameObjects.Container[] = [];
 
   constructor() {
@@ -140,6 +142,7 @@ export class GameScene extends Phaser.Scene {
         this.joystickActive = false;
         this.joystickPointerId = null;
         this.joystickVector = { x: 0, y: 0 };
+        this.joystickJumpFired = false;
         if (this.joystickThumb && this.joystickBase) {
           this.joystickThumb.setPosition(this.joystickBase.x, this.joystickBase.y);
         }
@@ -163,7 +166,7 @@ export class GameScene extends Phaser.Scene {
       // Pickup/place button for Player 2
       this.touchActionBtn = this.add.circle(actionX, actionY, 35, 0xe07a5f, 0.3)
         .setScrollFactor(0).setDepth(1000).setInteractive();
-      this.add.text(actionX, actionY, 'E', {
+      this.touchActionLabel = this.add.text(actionX, actionY, '⬆', {
         fontSize: '22px', color: '#e07a5f', fontFamily: 'monospace', fontStyle: 'bold',
       }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
@@ -334,6 +337,10 @@ export class GameScene extends Phaser.Scene {
 
     // Set world bounds to level size
     this.physics.world.setBounds(0, 0, this.levelData.width, this.levelData.height);
+
+    // Camera follow for scrolling levels (especially important on mobile)
+    this.cameras.main.startFollow(this.localPlayer, true, 0.1, 0.1);
+    this.cameras.main.setBounds(0, 0, this.levelData.width, this.levelData.height);
   }
 
   update(time: number) {
@@ -351,6 +358,16 @@ export class GameScene extends Phaser.Scene {
     // Touch controls (joystick)
     if (this.isTouchDevice && this.joystickActive) {
       body.setVelocityX(this.joystickVector.x * PLAYER_SPEED);
+      // Jump via joystick pull-up
+      if (this.joystickVector.y < -0.5 && body.blocked.down && !this.joystickJumpFired) {
+        body.setVelocityY(PLAYER_JUMP_VELOCITY);
+        this.joystickJumpFired = true;
+      }
+      // Reset jump flag when joystick returns to neutral
+      if (this.joystickVector.y >= -0.3) {
+        this.joystickJumpFired = false;
+      }
+      // Also allow dedicated jump button
       if (this.touchJumpRequested && body.blocked.down) {
         body.setVelocityY(PLAYER_JUMP_VELOCITY);
         this.touchJumpRequested = false;
@@ -433,6 +450,7 @@ export class GameScene extends Phaser.Scene {
     this.carriedBellSprite = nearest;
     nearest.setVisible(false);
     (nearest.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+    this.touchActionLabel?.setText('⬇');
 
     this.networkManager.send({
       type: NetworkMessageType.BellPickup,
@@ -460,6 +478,7 @@ export class GameScene extends Phaser.Scene {
 
     this.carriedBellId = null;
     this.carriedBellSprite = null;
+    this.touchActionLabel?.setText('⬆');
   }
 
   private playNote(note: string) {
