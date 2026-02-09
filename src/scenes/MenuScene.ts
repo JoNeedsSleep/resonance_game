@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT } from '../config';
 import { PlayerRole } from '../types';
 import { NetworkManager } from '../network/NetworkManager';
 
@@ -10,6 +10,7 @@ import { NetworkManager } from '../network/NetworkManager';
 export class MenuScene extends Phaser.Scene {
   private roomCodeText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
+  private copyButton: Phaser.GameObjects.Text | null = null;
   private networkManager: NetworkManager | null = null;
   private p1Btn: Phaser.GameObjects.Rectangle | null = null;
   private p2Btn: Phaser.GameObjects.Rectangle | null = null;
@@ -19,72 +20,157 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create() {
-    const centerX = GAME_WIDTH / 2;
-    const centerY = GAME_HEIGHT / 2;
+    const cx = GAME_WIDTH / 2;
+    const cy = GAME_HEIGHT / 2;
 
-    // Mountain silhouette background
+    // Mountain silhouette background — scale X coordinates to viewport width
     const bg = this.add.graphics();
+    const w = GAME_WIDTH;
+    const h = GAME_HEIGHT;
     bg.fillStyle(0x2d3436);
-    bg.fillTriangle(0, GAME_HEIGHT, 200, 150, 400, GAME_HEIGHT);
+    bg.fillTriangle(0, h, w * 0.21, h * 0.28, w * 0.42, h);
     bg.fillStyle(0x3d4446);
-    bg.fillTriangle(300, GAME_HEIGHT, 550, 100, 800, GAME_HEIGHT);
+    bg.fillTriangle(w * 0.31, h, w * 0.57, h * 0.19, w * 0.83, h);
     bg.fillStyle(0x4d5456);
-    bg.fillTriangle(600, GAME_HEIGHT, 800, 180, GAME_WIDTH, GAME_HEIGHT);
+    bg.fillTriangle(w * 0.63, h, w * 0.83, h * 0.33, w, h);
 
     // Title
-    this.add.text(centerX, 60, 'Mountain Ascent', {
-      fontSize: '28px',
+    this.add.text(cx, IS_PORTRAIT ? 80 : 60, 'Mountain Ascent', {
+      fontSize: IS_PORTRAIT ? '32px' : '28px',
       color: '#ffffff',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    // Player 1 button (blue) — left side
-    this.p1Btn = this.add.rectangle(centerX - 120, centerY - 20, 140, 140, 0x8ecae6, 0.8)
+    // Button layout — side-by-side on landscape, stacked on portrait
+    const btnSize = 140;
+    let p1X: number, p1Y: number, p2X: number, p2Y: number;
+
+    if (IS_PORTRAIT) {
+      p1X = cx;
+      p1Y = cy - 110;
+      p2X = cx;
+      p2Y = cy + 90;
+    } else {
+      p1X = cx - 120;
+      p1Y = cy - 20;
+      p2X = cx + 120;
+      p2Y = cy - 20;
+    }
+
+    // Player 1 button (blue)
+    this.p1Btn = this.add.rectangle(p1X, p1Y, btnSize, btnSize, 0x8ecae6, 0.8)
       .setInteractive({ useHandCursor: true });
-    this.add.image(centerX - 120, centerY - 40, 'player1').setScale(4);
-    // Mallet icon (strike indicator)
+    this.add.image(p1X, p1Y - 20, 'player1').setScale(4);
+    // Mallet icon
     const malletIcon = this.add.graphics();
     malletIcon.fillStyle(0x1a1a2e);
-    malletIcon.fillRect(centerX - 130, centerY + 20, 20, 4);
-    malletIcon.fillCircle(centerX - 110, centerY + 22, 6);
-    this.add.text(centerX - 120, centerY + 50, 'HOST', {
+    malletIcon.fillRect(p1X - 10, p1Y + 20, 20, 4);
+    malletIcon.fillCircle(p1X + 10, p1Y + 22, 6);
+    this.add.text(p1X, p1Y + 50, 'HOST', {
       fontSize: '14px',
       color: '#1a1a2e',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    // Player 2 button (orange) — right side
-    this.p2Btn = this.add.rectangle(centerX + 120, centerY - 20, 140, 140, 0xe07a5f, 0.8)
+    // Player 2 button (orange)
+    this.p2Btn = this.add.rectangle(p2X, p2Y, btnSize, btnSize, 0xe07a5f, 0.8)
       .setInteractive({ useHandCursor: true });
-    this.add.image(centerX + 120, centerY - 40, 'player2').setScale(4);
+    this.add.image(p2X, p2Y - 20, 'player2').setScale(4);
     // Note icons (music indicator)
-    this.add.text(centerX + 95, centerY + 10, '♪♫', {
+    this.add.text(p2X, p2Y + 10, '♪♫', {
       fontSize: '20px',
       color: '#1a1a2e',
-    });
-    this.add.text(centerX + 120, centerY + 50, 'JOIN', {
+    }).setOrigin(0.5);
+    this.add.text(p2X, p2Y + 50, 'JOIN', {
       fontSize: '14px',
       color: '#1a1a2e',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
+    // Info text area — below buttons
+    const infoY = IS_PORTRAIT ? cy + 210 : cy + 120;
+
     // Room code display
-    this.roomCodeText = this.add.text(centerX, centerY + 120, '', {
+    this.roomCodeText = this.add.text(cx, infoY, '', {
       fontSize: '28px',
       color: '#ffd700',
       fontFamily: 'monospace',
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    this.statusText = this.add.text(centerX, centerY + 160, 'Choose your role', {
+    this.statusText = this.add.text(cx, infoY + 40, 'Choose your role', {
       fontSize: '14px',
       color: '#aaaaaa',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
+    // Copy button (hidden until room code shown)
+    this.copyButton = this.add.text(cx, infoY + 75, '[ COPY CODE ]', {
+      fontSize: '14px',
+      color: '#ffd700',
+      fontFamily: 'monospace',
+      backgroundColor: '#2d3436',
+      padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setVisible(false).setInteractive({ useHandCursor: true });
+
+    this.copyButton.on('pointerdown', () => {
+      const code = this.roomCodeText?.text;
+      if (!code) return;
+
+      const showCopied = () => {
+        if (this.copyButton) {
+          this.copyButton.setText('COPIED!');
+          this.time.delayedCall(1500, () => {
+            this.copyButton?.setText('[ COPY CODE ]');
+          });
+        }
+      };
+
+      navigator.clipboard.writeText(code).then(showCopied).catch(() => {
+        // Fallback for older browsers / non-HTTPS
+        const ta = document.createElement('textarea');
+        ta.value = code;
+        ta.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        showCopied();
+      });
+    });
+
+    // Check for saved session (page was reloaded while connected)
+    const saved = NetworkManager.getSavedSession();
+    if (saved) {
+      this.showReconnectPrompt(saved);
+    }
+
     // Role selection handlers
     this.p1Btn.on('pointerdown', () => this.selectRole(PlayerRole.Player1));
     this.p2Btn.on('pointerdown', () => this.selectRole(PlayerRole.Player2));
+  }
+
+  private showReconnectPrompt(session: { role: PlayerRole; roomCode: string }) {
+    const cx = GAME_WIDTH / 2;
+    const infoY = IS_PORTRAIT ? GAME_HEIGHT / 2 + 210 : GAME_HEIGHT / 2 + 120;
+
+    this.statusText?.setText(
+      `Previous session (${session.role === PlayerRole.Player1 ? 'Host' : 'Guest'})`
+    );
+    this.roomCodeText?.setText(session.roomCode);
+
+    const reconnectBtn = this.add.text(cx, infoY + 75, '[ RECONNECT ]', {
+      fontSize: '14px',
+      color: '#4ecca3',
+      fontFamily: 'monospace',
+      backgroundColor: '#2d3436',
+      padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    reconnectBtn.on('pointerdown', () => {
+      reconnectBtn.destroy();
+      this.selectRole(session.role);
+    });
   }
 
   private selectRole(role: PlayerRole) {
@@ -109,10 +195,12 @@ export class MenuScene extends Phaser.Scene {
       // Show room code so Player 1 can share it
       this.roomCodeText?.setText(id);
       this.statusText?.setText('Share this code with Player 2');
+      this.copyButton?.setVisible(true);
     });
 
     this.networkManager.onConnected(() => {
       this.statusText?.setText('Connected!');
+      this.copyButton?.setVisible(false);
       // Brief delay so user sees "Connected!" before scene switch
       this.time.delayedCall(500, () => {
         this.scene.start('GameScene', {
