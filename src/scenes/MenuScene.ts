@@ -23,16 +23,23 @@ export class MenuScene extends Phaser.Scene {
     const cx = GAME_WIDTH / 2;
     const cy = GAME_HEIGHT / 2;
 
-    // Mountain silhouette background — scale X coordinates to viewport width
-    const bg = this.add.graphics();
-    const w = GAME_WIDTH;
-    const h = GAME_HEIGHT;
+    // Mountain silhouette background — render at low res for pixel art edges
+    const bgScale = 4;
+    const bw = Math.ceil(GAME_WIDTH / bgScale);
+    const bh = Math.ceil(GAME_HEIGHT / bgScale);
+    const bg = this.make.graphics({ x: 0, y: 0 }, false);
+    bg.fillStyle(0x1a1a2e);
+    bg.fillRect(0, 0, bw, bh);
     bg.fillStyle(0x2d3436);
-    bg.fillTriangle(0, h, w * 0.21, h * 0.28, w * 0.42, h);
+    bg.fillTriangle(0, bh, bw * 0.21, bh * 0.28, bw * 0.42, bh);
     bg.fillStyle(0x3d4446);
-    bg.fillTriangle(w * 0.31, h, w * 0.57, h * 0.19, w * 0.83, h);
+    bg.fillTriangle(bw * 0.31, bh, bw * 0.57, bh * 0.19, bw * 0.83, bh);
     bg.fillStyle(0x4d5456);
-    bg.fillTriangle(w * 0.63, h, w * 0.83, h * 0.33, w, h);
+    bg.fillTriangle(bw * 0.63, bh, bw * 0.83, bh * 0.33, bw, bh);
+    bg.generateTexture('menu_bg', bw, bh);
+    bg.destroy();
+    this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'menu_bg')
+      .setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
 
     // Title
     this.add.text(cx, IS_PORTRAIT ? 80 : 60, 'Mountain Ascent', {

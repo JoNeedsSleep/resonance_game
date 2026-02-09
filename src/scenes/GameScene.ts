@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS } from '../types';
-import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload } from '../types';
+import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS, MoonGateType } from '../types';
+import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload, NotePlayPayload, MoonGateDefinition } from '../types';
 import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
@@ -28,6 +28,10 @@ export class GameScene extends Phaser.Scene {
   private carriedBellId: string | null = null;
   private carriedBellSprite: Phaser.Physics.Arcade.Sprite | null = null;
   private solvedPuzzles: Set<string> = new Set();
+  private playedSequences: Map<string, PentatonicNote[]> = new Map();
+  private activePuzzleGroup: string | null = null;
+  private exitZone: Phaser.GameObjects.Zone | null = null;
+  private exitMarker: Phaser.GameObjects.Graphics | null = null;
   private strikeKey!: Phaser.Input.Keyboard.Key;
   private pickupKey!: Phaser.Input.Keyboard.Key;
   private noteKeys: Record<string, Phaser.Input.Keyboard.Key> = {};
@@ -242,6 +246,9 @@ export class GameScene extends Phaser.Scene {
         case NetworkMessageType.BellPlace:
           this.handleRemoteBellCarry(message.payload as BellCarryPayload);
           break;
+        case NetworkMessageType.NotePlay:
+          this.handleRemoteNotePlay(message.payload as NotePlayPayload);
+          break;
         case NetworkMessageType.PuzzleSolved:
           this.handlePuzzleSolved(message.payload as { puzzleGroup: string });
           break;
@@ -270,6 +277,8 @@ export class GameScene extends Phaser.Scene {
     this.currentLevel = index;
     this.levelData = levels[index];
     this.solvedPuzzles.clear();
+    this.playedSequences.clear();
+    this.activePuzzleGroup = null;
     this.carriedBellId = null;
     this.carriedBellSprite = null;
 
@@ -278,6 +287,10 @@ export class GameScene extends Phaser.Scene {
     this.bells.clear(true, true);
     this.moonGates.clear(true, true);
     this.pressurePlates.clear(true, true);
+    this.exitZone?.destroy();
+    this.exitZone = null;
+    this.exitMarker?.destroy();
+    this.exitMarker = null;
 
     // Build platforms
     for (const plat of this.levelData.platforms) {
@@ -294,11 +307,21 @@ export class GameScene extends Phaser.Scene {
       b.refreshBody();
     }
 
-    // Place moon gates
+    // Place moon gates with proper sizing
     for (const gateDef of this.levelData.moonGates) {
       const g = this.moonGates.create(gateDef.position.x, gateDef.position.y, 'moongate') as Phaser.Physics.Arcade.Sprite;
+      g.setDisplaySize(gateDef.width, gateDef.height);
       g.setData('definition', gateDef);
       g.refreshBody();
+
+      // Tint by type
+      if (gateDef.type === MoonGateType.Player1) {
+        g.setTint(0x8ecae6); // Blue
+      } else if (gateDef.type === MoonGateType.Player2) {
+        g.setTint(0xe07a5f); // Orange
+      } else {
+        g.setTint(0xffd700); // Gold for puzzle gates
+      }
     }
 
     // Place pressure plates
@@ -329,11 +352,38 @@ export class GameScene extends Phaser.Scene {
 
     this.remotePlayer = this.physics.add.sprite(remoteSpawn.x, remoteSpawn.y, remoteTexture);
     this.remotePlayer.setScale(PIXEL_SCALE);
-    (this.remotePlayer.body as Phaser.Physics.Arcade.Body).allowGravity = false; // Remote player position is synced
+    (this.remotePlayer.body as Phaser.Physics.Arcade.Body).allowGravity = false;
 
-    // Collisions
+    // Collisions — platforms
     this.physics.add.collider(this.localPlayer, this.platforms);
     this.physics.add.collider(this.remotePlayer, this.platforms);
+
+    // Moon gate collisions — type-based blocking
+    this.physics.add.collider(
+      this.localPlayer,
+      this.moonGates,
+      undefined,
+      (_player, gateObj) => {
+        const gate = gateObj as Phaser.Physics.Arcade.Sprite;
+        const def = gate.getData('definition') as MoonGateDefinition;
+        return this.shouldGateBlock(def);
+      },
+      this,
+    );
+
+    // Exit zone
+    const exitPos = this.levelData.exitPosition;
+    this.exitZone = this.add.zone(exitPos.x, exitPos.y, 64, 80);
+    this.physics.add.existing(this.exitZone, true); // static body
+    this.physics.add.overlap(this.localPlayer, this.exitZone, () => {
+      this.checkLevelComplete();
+    });
+
+    // Exit marker (golden glow, hidden until all puzzles solved)
+    this.exitMarker = this.add.graphics();
+    this.exitMarker.fillStyle(0xffd700, 0.3);
+    this.exitMarker.fillRect(exitPos.x - 32, exitPos.y - 40, 64, 80);
+    this.exitMarker.setVisible(false);
 
     // Set world bounds to level size
     this.physics.world.setBounds(0, 0, this.levelData.width, this.levelData.height);
@@ -341,6 +391,63 @@ export class GameScene extends Phaser.Scene {
     // Camera follow for scrolling levels (especially important on mobile)
     this.cameras.main.startFollow(this.localPlayer, true, 0.1, 0.1);
     this.cameras.main.setBounds(0, 0, this.levelData.width, this.levelData.height);
+  }
+
+  private shouldGateBlock(def: MoonGateDefinition): boolean {
+    // Player1-type gates: only P1 passes (blocks P2)
+    if (def.type === MoonGateType.Player1) {
+      return this.role !== PlayerRole.Player1;
+    }
+    // Player2-type gates: only P2 passes (blocks P1)
+    if (def.type === MoonGateType.Player2) {
+      return this.role !== PlayerRole.Player2;
+    }
+    // Puzzle gates: block both until solved
+    if (def.type === MoonGateType.Puzzle && def.puzzleGroup) {
+      return !this.solvedPuzzles.has(def.puzzleGroup);
+    }
+    return false;
+  }
+
+  private allPuzzlesSolved(): boolean {
+    const groups = Object.keys(this.levelData.puzzleSequences);
+    return groups.length > 0 && groups.every(g => this.solvedPuzzles.has(g));
+  }
+
+  private updateExitMarker() {
+    if (this.exitMarker) {
+      this.exitMarker.setVisible(this.allPuzzlesSolved());
+      if (this.allPuzzlesSolved()) {
+        // Pulsing glow effect
+        this.tweens.add({
+          targets: this.exitMarker,
+          alpha: { from: 0.3, to: 0.8 },
+          duration: 1000,
+          yoyo: true,
+          repeat: -1,
+        });
+      }
+    }
+  }
+
+  private checkLevelComplete() {
+    if (!this.allPuzzlesSolved()) return;
+
+    // Check if remote player is also near the exit
+    const exitPos = this.levelData.exitPosition;
+    const remoteDist = Phaser.Math.Distance.Between(
+      this.remotePlayer.x, this.remotePlayer.y,
+      exitPos.x, exitPos.y,
+    );
+    if (remoteDist > 120) return; // Remote player must be nearby
+
+    // Level complete!
+    this.networkManager.send({
+      type: NetworkMessageType.LevelComplete,
+      payload: {},
+      timestamp: Date.now(),
+    });
+    this.advanceLevel();
   }
 
   update(time: number) {
@@ -426,6 +533,9 @@ export class GameScene extends Phaser.Scene {
     if (!nearest) return;
 
     const def = nearest.getData('definition');
+    // Set active puzzle group so P2 knows which puzzle to play notes for
+    this.activePuzzleGroup = def.puzzleGroup;
+
     // Play animation
     nearest.setTint(0xffd700);
     this.time.delayedCall(300, () => nearest.clearTint());
@@ -482,12 +592,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private playNote(note: string) {
+    if (!this.activePuzzleGroup) return; // No puzzle active — ignore note
+
     // Player 2 hears their own note
     this.audioManager.playBellNote(note);
 
+    const puzzleGroup = this.activePuzzleGroup;
+
+    // Track locally on P2 side for visual feedback
+    this.trackNoteAndCheck(puzzleGroup, note as PentatonicNote);
+
     this.networkManager.send({
       type: NetworkMessageType.NotePlay,
-      payload: { note, puzzleGroup: '' },
+      payload: { note, puzzleGroup } as NotePlayPayload,
       timestamp: Date.now(),
     });
   }
@@ -518,6 +635,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleRemoteBellStrike(payload: BellStrikePayload) {
+    // P2 side: track which puzzle group P1 just struck
+    const bellDef = this.levelData.bells.find(b => b.id === payload.bellId);
+    if (bellDef) {
+      this.activePuzzleGroup = bellDef.puzzleGroup;
+    }
+
     // Show visual animation but NO sound for the receiving player
     this.bells.getChildren().forEach((child) => {
       const bell = child as Phaser.Physics.Arcade.Sprite;
@@ -542,17 +665,94 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private handleRemoteNotePlay(payload: NotePlayPayload) {
+    // P1 receives notes from P2 — validate the sequence
+    this.trackNoteAndCheck(payload.puzzleGroup, payload.note);
+  }
+
+  private trackNoteAndCheck(puzzleGroup: string, note: PentatonicNote) {
+    const expected = this.levelData.puzzleSequences[puzzleGroup];
+    if (!expected || this.solvedPuzzles.has(puzzleGroup)) return;
+
+    if (!this.playedSequences.has(puzzleGroup)) {
+      this.playedSequences.set(puzzleGroup, []);
+    }
+    const played = this.playedSequences.get(puzzleGroup)!;
+    played.push(note);
+
+    // Check against expected sequence
+    const idx = played.length - 1;
+    if (played[idx] !== expected[idx]) {
+      // Wrong note — reset with red flash feedback
+      this.playedSequences.set(puzzleGroup, []);
+      this.cameras.main.flash(200, 255, 80, 80, false); // Red flash
+      return;
+    }
+
+    if (played.length === expected.length) {
+      // Sequence complete — puzzle solved!
+      this.onPuzzleSolved(puzzleGroup);
+    }
+    // Otherwise correct prefix — wait for more notes
+  }
+
+  private onPuzzleSolved(puzzleGroup: string) {
+    this.solvedPuzzles.add(puzzleGroup);
+    this.playedSequences.delete(puzzleGroup);
+    this.activePuzzleGroup = null;
+
+    // Play success chord
+    this.audioManager.playSuccessChord();
+
+    // Fade out the corresponding moon gate(s)
+    this.moonGates.getChildren().forEach((child) => {
+      const gate = child as Phaser.Physics.Arcade.Sprite;
+      const def = gate.getData('definition') as MoonGateDefinition;
+      if (def?.puzzleGroup === puzzleGroup) {
+        this.tweens.add({
+          targets: gate,
+          alpha: 0.15,
+          duration: 800,
+          onComplete: () => {
+            (gate.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+          },
+        });
+      }
+    });
+
+    // Update exit marker visibility
+    this.updateExitMarker();
+
+    // Broadcast to other player
+    this.networkManager.send({
+      type: NetworkMessageType.PuzzleSolved,
+      payload: { puzzleGroup },
+      timestamp: Date.now(),
+    });
+  }
+
   private handlePuzzleSolved(payload: { puzzleGroup: string }) {
     this.solvedPuzzles.add(payload.puzzleGroup);
+    this.audioManager.playSuccessChord();
+
     // Open corresponding moon gate
     this.moonGates.getChildren().forEach((child) => {
       const gate = child as Phaser.Physics.Arcade.Sprite;
       const def = gate.getData('definition');
       if (def?.puzzleGroup === payload.puzzleGroup) {
-        gate.setAlpha(0.3);
-        (gate.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+        this.tweens.add({
+          targets: gate,
+          alpha: 0.15,
+          duration: 800,
+          onComplete: () => {
+            (gate.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+          },
+        });
       }
     });
+
+    // Update exit marker visibility
+    this.updateExitMarker();
   }
 
   private syncPosition(time: number) {
