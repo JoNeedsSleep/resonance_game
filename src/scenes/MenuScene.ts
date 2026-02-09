@@ -10,10 +10,10 @@ import { NetworkManager } from '../network/NetworkManager';
 export class MenuScene extends Phaser.Scene {
   private roomCodeText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
-  private copyButton: Phaser.GameObjects.Text | null = null;
   private networkManager: NetworkManager | null = null;
   private p1Btn: Phaser.GameObjects.Rectangle | null = null;
   private p2Btn: Phaser.GameObjects.Rectangle | null = null;
+  private roomCodeOverlay: HTMLDivElement | null = null;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -104,41 +104,6 @@ export class MenuScene extends Phaser.Scene {
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    // Copy button (hidden until room code shown)
-    this.copyButton = this.add.text(cx, infoY + 75, '[ COPY CODE ]', {
-      fontSize: '14px',
-      color: '#ffd700',
-      fontFamily: 'monospace',
-      backgroundColor: '#2d3436',
-      padding: { x: 12, y: 6 },
-    }).setOrigin(0.5).setVisible(false).setInteractive({ useHandCursor: true });
-
-    this.copyButton.on('pointerdown', () => {
-      const code = this.roomCodeText?.text;
-      if (!code) return;
-
-      const showCopied = () => {
-        if (this.copyButton) {
-          this.copyButton.setText('COPIED!');
-          this.time.delayedCall(1500, () => {
-            this.copyButton?.setText('[ COPY CODE ]');
-          });
-        }
-      };
-
-      navigator.clipboard.writeText(code).then(showCopied).catch(() => {
-        // Fallback for older browsers / non-HTTPS
-        const ta = document.createElement('textarea');
-        ta.value = code;
-        ta.style.cssText = 'position:fixed;opacity:0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        showCopied();
-      });
-    });
-
     // Check for saved session (page was reloaded while connected)
     const saved = NetworkManager.getSavedSession();
     if (saved) {
@@ -195,12 +160,12 @@ export class MenuScene extends Phaser.Scene {
       // Show room code so Player 1 can share it
       this.roomCodeText?.setText(id);
       this.statusText?.setText('Share this code with Player 2');
-      this.copyButton?.setVisible(true);
+      this.showRoomCodeOverlay(id);
     });
 
     this.networkManager.onConnected(() => {
       this.statusText?.setText('Connected!');
-      this.copyButton?.setVisible(false);
+      this.hideRoomCodeOverlay();
       // Brief delay so user sees "Connected!" before scene switch
       this.time.delayedCall(500, () => {
         this.scene.start('GameScene', {
@@ -308,5 +273,59 @@ export class MenuScene extends Phaser.Scene {
       this.p1Btn?.setAlpha(1);
       this.p2Btn?.setAlpha(1);
     });
+  }
+
+  private showRoomCodeOverlay(code: string) {
+    this.hideRoomCodeOverlay();
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 8px; z-index: 1000;
+    `;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = code;
+    input.readOnly = true;
+    input.style.cssText = `
+      font-size: 20px; font-family: monospace; text-align: center;
+      padding: 8px 16px; width: 260px; max-width: 50vw;
+      background: #2d3436; color: #ffd700; border: 2px solid #ffd700;
+      border-radius: 8px; outline: none;
+    `;
+
+    const btn = document.createElement('button');
+    btn.textContent = 'COPY';
+    btn.style.cssText = `
+      font-size: 16px; font-family: monospace; padding: 8px 16px;
+      background: #ffd700; color: #1a1a2e; border: none;
+      border-radius: 8px; cursor: pointer; font-weight: bold;
+    `;
+
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = 'COPIED!';
+        setTimeout(() => { btn.textContent = 'COPY'; }, 1500);
+      }).catch(() => {
+        input.select();
+        document.execCommand('copy');
+        btn.textContent = 'COPIED!';
+        setTimeout(() => { btn.textContent = 'COPY'; }, 1500);
+      });
+    });
+
+    // Also select all on tap so mobile users can long-press copy
+    input.addEventListener('focus', () => input.select());
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(btn);
+    document.body.appendChild(wrapper);
+    this.roomCodeOverlay = wrapper;
+  }
+
+  private hideRoomCodeOverlay() {
+    this.roomCodeOverlay?.remove();
+    this.roomCodeOverlay = null;
   }
 }

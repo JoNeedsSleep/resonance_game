@@ -10,7 +10,8 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: 'game-container',
   width: GAME_WIDTH,
   height: GAME_HEIGHT,
-  antialias: true,
+  pixelArt: true,
+  roundPixels: true,
   physics: {
     default: 'arcade',
     arcade: {
@@ -21,6 +22,7 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    max: { width: 1280, height: 720 },
   },
   input: {
     activePointers: 3, // Support multi-touch for joystick + buttons
