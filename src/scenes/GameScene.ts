@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
-import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS } from '../types';
-import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload } from '../types';
-import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE } from '../config';
+import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS, AscensionPhase } from '../types';
+import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload, AscensionAltarPayload } from '../types';
+import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE, PLAYER1_COLOR, PLAYER2_COLOR } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
 import { levels } from '../levels';
@@ -52,11 +52,27 @@ export class GameScene extends Phaser.Scene {
   private touchActionLabel: Phaser.GameObjects.Text | null = null;
   private noteButtons: Phaser.GameObjects.Container[] = [];
 
+  // Carry indicators
+  private carriedBellIndicator: Phaser.GameObjects.Sprite | null = null;
+  private remoteCarryingBell = false;
+  private remoteCarryIndicator: Phaser.GameObjects.Sprite | null = null;
+
   // Help button
   private helpBtn: Phaser.GameObjects.Arc | null = null;
   private helpLabel: Phaser.GameObjects.Text | null = null;
   private helpPopupObjects: Phaser.GameObjects.GameObject[] = [];
   private helpPopupVisible = false;
+
+  // Ascension ceremony
+  private ascensionPhase: AscensionPhase = AscensionPhase.Inactive;
+  private localOnAltar = false;
+  private remoteOnAltar = false;
+  private controlsDisabled = false;
+  private altarSprites: Phaser.GameObjects.Image[] = [];
+  private sparkleEmitterLocal: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
+  private sparkleEmitterRemote: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
+  private lightBeamLocal: Phaser.GameObjects.Rectangle | null = null;
+  private lightBeamRemote: Phaser.GameObjects.Rectangle | null = null;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -373,11 +389,16 @@ export class GameScene extends Phaser.Scene {
           this.handleRemoteBellStrike(message.payload as BellStrikePayload);
           break;
         case NetworkMessageType.BellPickup:
+          this.handleRemoteBellPickup(message.payload as BellCarryPayload);
+          break;
         case NetworkMessageType.BellPlace:
-          this.handleRemoteBellCarry(message.payload as BellCarryPayload);
+          this.handleRemoteBellPlace(message.payload as BellCarryPayload);
           break;
         case NetworkMessageType.PuzzleSolved:
           this.handlePuzzleSolved(message.payload as { puzzleGroup: string });
+          break;
+        case NetworkMessageType.AscensionPlayerOnAltar:
+          this.handleRemoteAltarState(message.payload as AscensionAltarPayload);
           break;
         case NetworkMessageType.LevelComplete:
           this.advanceLevel();
@@ -407,6 +428,20 @@ export class GameScene extends Phaser.Scene {
     this.carriedBellId = null;
     this.carriedBellSprite = null;
     this.remoteTargetInitialized = false;
+    this.remoteCarryingBell = false;
+    this.cleanupAscensionEffects();
+    this.ascensionPhase = AscensionPhase.Inactive;
+    this.localOnAltar = false;
+    this.remoteOnAltar = false;
+    this.controlsDisabled = false;
+    if (this.carriedBellIndicator) {
+      this.carriedBellIndicator.destroy();
+      this.carriedBellIndicator = null;
+    }
+    if (this.remoteCarryIndicator) {
+      this.remoteCarryIndicator.destroy();
+      this.remoteCarryIndicator = null;
+    }
 
     // Clear existing objects
     this.platforms.clear(true, true);
@@ -484,10 +519,13 @@ export class GameScene extends Phaser.Scene {
     this.syncPosition(time);
     this.updateCarriedBell();
     this.interpolateRemotePlayer();
+    this.updateRemoteCarryIndicator();
+    this.updateAscension();
   }
 
   private interpolateRemotePlayer() {
     if (!this.remotePlayer || !this.remoteTargetInitialized) return;
+    if (this.ascensionPhase === AscensionPhase.FloatingUp || this.ascensionPhase === AscensionPhase.TransitionOut) return;
 
     const lerpFactor = 0.25;
     const newX = Phaser.Math.Linear(this.remotePlayer.x, this.remoteTargetX, lerpFactor);
@@ -497,6 +535,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleMovement() {
     if (!this.localPlayer?.body) return;
+    if (this.controlsDisabled) return;
 
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
 
@@ -542,6 +581,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleActions() {
+    if (this.controlsDisabled) return;
+
     // Player 1: Strike bell (keyboard)
     if (this.role === PlayerRole.Player1 && this.strikeKey && Phaser.Input.Keyboard.JustDown(this.strikeKey)) {
       this.tryStrikeBell();
@@ -659,6 +700,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleRemotePlayerMove(payload: PlayerMovePayload) {
     if (!this.remotePlayer) return;
+    if (this.ascensionPhase === AscensionPhase.FloatingUp || this.ascensionPhase === AscensionPhase.TransitionOut) return;
 
     this.remoteTargetX = payload.position.x;
     this.remoteTargetY = payload.position.y;
@@ -682,7 +724,19 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private handleRemoteBellCarry(payload: BellCarryPayload) {
+  private handleRemoteBellPickup(payload: BellCarryPayload) {
+    this.bells.getChildren().forEach((child) => {
+      const bell = child as Phaser.Physics.Arcade.Sprite;
+      const def = bell.getData('definition');
+      if (def?.id === payload.bellId) {
+        bell.setVisible(false);
+        (bell.body as Phaser.Physics.Arcade.StaticBody).enable = false;
+      }
+    });
+    this.remoteCarryingBell = true;
+  }
+
+  private handleRemoteBellPlace(payload: BellCarryPayload) {
     this.bells.getChildren().forEach((child) => {
       const bell = child as Phaser.Physics.Arcade.Sprite;
       const def = bell.getData('definition');
@@ -693,6 +747,7 @@ export class GameScene extends Phaser.Scene {
         bell.refreshBody();
       }
     });
+    this.remoteCarryingBell = false;
   }
 
   private handlePuzzleSolved(payload: { puzzleGroup: string }) {
@@ -706,6 +761,13 @@ export class GameScene extends Phaser.Scene {
         (gate.body as Phaser.Physics.Arcade.StaticBody).enable = false;
       }
     });
+
+    // Check if all puzzle groups for this level are solved
+    const allGroups = Object.keys(this.levelData.puzzleSequences);
+    const allSolved = allGroups.every((g) => this.solvedPuzzles.has(g));
+    if (allSolved && this.ascensionPhase === AscensionPhase.Inactive) {
+      this.beginAscensionSequence();
+    }
   }
 
   private syncPosition(time: number) {
@@ -729,8 +791,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateCarriedBell() {
-    // Visual feedback: if Player 2 is carrying a bell, it's on their back
-    // This is handled by hiding the bell sprite — the rucksack texture implies carrying
+    if (this.carriedBellId && this.localPlayer) {
+      if (!this.carriedBellIndicator) {
+        this.carriedBellIndicator = this.add.sprite(0, 0, 'bell_small');
+        this.carriedBellIndicator.setScale(PIXEL_SCALE);
+        this.carriedBellIndicator.setDepth(999);
+      }
+      this.carriedBellIndicator.setPosition(this.localPlayer.x, this.localPlayer.y - 36);
+      this.carriedBellIndicator.setVisible(true);
+    } else if (this.carriedBellIndicator) {
+      this.carriedBellIndicator.setVisible(false);
+    }
+  }
+
+  private updateRemoteCarryIndicator() {
+    if (this.remoteCarryingBell && this.remotePlayer) {
+      if (!this.remoteCarryIndicator) {
+        this.remoteCarryIndicator = this.add.sprite(0, 0, 'bell_small');
+        this.remoteCarryIndicator.setScale(PIXEL_SCALE);
+        this.remoteCarryIndicator.setDepth(999);
+      }
+      this.remoteCarryIndicator.setPosition(this.remotePlayer.x, this.remotePlayer.y - 36);
+      this.remoteCarryIndicator.setVisible(true);
+    } else if (this.remoteCarryIndicator) {
+      this.remoteCarryIndicator.setVisible(false);
+    }
   }
 
   private advanceLevel() {

@@ -27,6 +27,22 @@ export enum MoonGateType {
   Puzzle = 'puzzle',      // Color-coded — opens when puzzle solved
 }
 
+/** Ascension ceremony phases */
+export enum AscensionPhase {
+  Inactive = 'inactive',
+  SparklesActive = 'sparkles_active',
+  WaitingOnAltars = 'waiting_on_altars',
+  LightBeamDown = 'light_beam_down',
+  FloatingUp = 'floating_up',
+  TransitionOut = 'transition_out',
+}
+
+export interface AltarDefinition {
+  id: string;
+  position: Position;
+  forPlayer: PlayerRole;
+}
+
 export interface Position {
   x: number;
   y: number;
@@ -78,6 +94,7 @@ export interface LevelData {
   moonGates: MoonGateDefinition[];
   pressurePlates: PressurePlateDefinition[];
   puzzleSequences: Record<string, PentatonicNote[]>; // puzzleGroup -> correct note sequence
+  altars: AltarDefinition[];
   exitPosition: Position;
   background: {
     layers: string[];        // Parallax layer asset keys, back to front
@@ -94,6 +111,7 @@ export enum NetworkMessageType {
   SequenceAttempt = 'sequence_attempt',
   PuzzleSolved = 'puzzle_solved',
   PressurePlateToggle = 'pressure_plate_toggle',
+  AscensionPlayerOnAltar = 'ascension_player_on_altar',
   LevelComplete = 'level_complete',
   GameState = 'game_state',
   LevelLoad = 'level_load',
@@ -136,4 +154,9 @@ export interface SequenceAttemptPayload {
 export interface PuzzleSolvedPayload {
   puzzleGroup: string;
   moonGateId: string;
+}
+
+export interface AscensionAltarPayload {
+  role: PlayerRole;
+  onAltar: boolean;
 }

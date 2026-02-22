@@ -1,4 +1,4 @@
-import { LevelData, PentatonicNote, MoonGateType } from '../types';
+import { LevelData, PentatonicNote, MoonGateType, PlayerRole } from '../types';
 
 /**
  * Level 1 — Mountain Base (Tutorial)
@@ -45,6 +45,10 @@ export const level1: LevelData = {
   puzzleSequences: {
     red: [PentatonicNote.Gong],
   },
+  altars: [
+    { id: 'l1-altar-p1', position: { x: 870, y: 475 }, forPlayer: PlayerRole.Player1 },
+    { id: 'l1-altar-p2', position: { x: 920, y: 475 }, forPlayer: PlayerRole.Player2 },
+  ],
   exitPosition: { x: 900, y: 400 },
   background: {
     layers: ['bg_mountain_base'],

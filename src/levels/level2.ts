@@ -1,4 +1,4 @@
-import { LevelData, PentatonicNote, MoonGateType } from '../types';
+import { LevelData, PentatonicNote, MoonGateType, PlayerRole } from '../types';
 
 /**
  * Level 2 — Stone Stairway
@@ -78,6 +78,10 @@ export const level2: LevelData = {
   puzzleSequences: {
     blue: [PentatonicNote.Zhi, PentatonicNote.Shang],
   },
+  altars: [
+    { id: 'l2-altar-p1', position: { x: 880, y: 475 }, forPlayer: PlayerRole.Player1 },
+    { id: 'l2-altar-p2', position: { x: 930, y: 475 }, forPlayer: PlayerRole.Player2 },
+  ],
   exitPosition: { x: 920, y: 440 },
   background: {
     layers: ['bg_stone_stairway'],
