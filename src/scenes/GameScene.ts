@@ -42,6 +42,12 @@ export class GameScene extends Phaser.Scene {
   private joystickPointerId: number | null = null;
   private touchJumpRequested = false;
   private joystickJumpFired = false;
+
+  // Remote player interpolation
+  private remoteTargetX = 0;
+  private remoteTargetY = 0;
+  private remoteTargetInitialized = false;
+
   private touchActionBtn: Phaser.GameObjects.Arc | null = null;
   private touchActionLabel: Phaser.GameObjects.Text | null = null;
   private noteButtons: Phaser.GameObjects.Container[] = [];
@@ -280,6 +286,7 @@ export class GameScene extends Phaser.Scene {
     this.solvedPuzzles.clear();
     this.carriedBellId = null;
     this.carriedBellSprite = null;
+    this.remoteTargetInitialized = false;
 
     // Clear existing objects
     this.platforms.clear(true, true);
@@ -347,8 +354,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, this.levelData.width, this.levelData.height);
 
     // Camera follow for scrolling levels (especially important on mobile)
-    this.cameras.main.startFollow(this.localPlayer, true, 0.15, 0.2);
-    this.cameras.main.setDeadzone(40, 20);
+    this.cameras.main.startFollow(this.localPlayer, true, 0.15, 0.35);
     this.cameras.main.setBounds(0, 0, this.levelData.width, this.levelData.height);
   }
 
@@ -357,6 +363,16 @@ export class GameScene extends Phaser.Scene {
     this.handleActions();
     this.syncPosition(time);
     this.updateCarriedBell();
+    this.interpolateRemotePlayer();
+  }
+
+  private interpolateRemotePlayer() {
+    if (!this.remotePlayer || !this.remoteTargetInitialized) return;
+
+    const lerpFactor = 0.25;
+    const newX = Phaser.Math.Linear(this.remotePlayer.x, this.remoteTargetX, lerpFactor);
+    const newY = Phaser.Math.Linear(this.remotePlayer.y, this.remoteTargetY, lerpFactor);
+    this.remotePlayer.setPosition(newX, newY);
   }
 
   private handleMovement() {
@@ -523,7 +539,15 @@ export class GameScene extends Phaser.Scene {
 
   private handleRemotePlayerMove(payload: PlayerMovePayload) {
     if (!this.remotePlayer) return;
-    this.remotePlayer.setPosition(payload.position.x, payload.position.y);
+
+    this.remoteTargetX = payload.position.x;
+    this.remoteTargetY = payload.position.y;
+
+    // Snap directly on the first update to avoid lerping from 0,0
+    if (!this.remoteTargetInitialized) {
+      this.remotePlayer.setPosition(payload.position.x, payload.position.y);
+      this.remoteTargetInitialized = true;
+    }
   }
 
   private handleRemoteBellStrike(payload: BellStrikePayload) {
