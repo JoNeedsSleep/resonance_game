@@ -32,6 +32,8 @@ export class GameScene extends Phaser.Scene {
   private strikeKey!: Phaser.Input.Keyboard.Key;
   private pickupKey!: Phaser.Input.Keyboard.Key;
   private noteKeys: Record<string, Phaser.Input.Keyboard.Key> = {};
+  private playedNoteSequence: PentatonicNote[] = [];
+  private sequenceResetTimer: Phaser.Time.TimerEvent | null = null;
 
   // Touch controls
   private isTouchDevice = false;
@@ -431,6 +433,11 @@ export class GameScene extends Phaser.Scene {
     this.currentLevel = index;
     this.levelData = levels[index];
     this.solvedPuzzles.clear();
+    this.playedNoteSequence = [];
+    if (this.sequenceResetTimer) {
+      this.sequenceResetTimer.destroy();
+      this.sequenceResetTimer = null;
+    }
     this.carriedBellId = null;
     this.carriedBellSprite = null;
     this.remoteTargetInitialized = false;
@@ -680,6 +687,49 @@ export class GameScene extends Phaser.Scene {
       payload: { note, puzzleGroup: '' },
       timestamp: Date.now(),
     });
+
+    this.checkNoteSequence(note as PentatonicNote);
+  }
+
+  private checkNoteSequence(note: PentatonicNote) {
+    this.playedNoteSequence.push(note);
+
+    // Reset inactivity timer — clear buffer if no notes played for 3 seconds
+    if (this.sequenceResetTimer) {
+      this.sequenceResetTimer.destroy();
+    }
+    this.sequenceResetTimer = this.time.delayedCall(3000, () => {
+      this.playedNoteSequence = [];
+    });
+
+    // Check against all unsolved puzzle sequences
+    for (const [puzzleGroup, expectedSeq] of Object.entries(this.levelData.puzzleSequences)) {
+      if (this.solvedPuzzles.has(puzzleGroup)) continue;
+
+      const seqLen = expectedSeq.length;
+      if (this.playedNoteSequence.length < seqLen) continue;
+
+      // Compare the tail of played notes against the expected sequence
+      const tail = this.playedNoteSequence.slice(-seqLen);
+      const matches = tail.every((n, i) => n === expectedSeq[i]);
+
+      if (matches) {
+        this.playedNoteSequence = [];
+        if (this.sequenceResetTimer) {
+          this.sequenceResetTimer.destroy();
+          this.sequenceResetTimer = null;
+        }
+
+        this.handlePuzzleSolved({ puzzleGroup });
+
+        this.networkManager.send({
+          type: NetworkMessageType.PuzzleSolved,
+          payload: { puzzleGroup },
+          timestamp: Date.now(),
+        });
+        break;
+      }
+    }
   }
 
   private findNearestBell(): Phaser.Physics.Arcade.Sprite | null {
