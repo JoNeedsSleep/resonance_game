@@ -52,6 +52,13 @@ export class GameScene extends Phaser.Scene {
   private touchActionLabel: Phaser.GameObjects.Text | null = null;
   private noteButtons: Phaser.GameObjects.Container[] = [];
 
+  // Help button
+  private helpBtn: Phaser.GameObjects.Arc | null = null;
+  private helpLabel: Phaser.GameObjects.Text | null = null;
+  private helpPopupObjects: Phaser.GameObjects.GameObject[] = [];
+  private helpPopupVisible = false;
+  private helpPopupPinned = false;
+
   constructor() {
     super({ key: 'GameScene' });
   }
@@ -77,6 +84,8 @@ export class GameScene extends Phaser.Scene {
     if (this.isTouchDevice) {
       this.setupTouchControls();
     }
+
+    this.createHelpButton();
   }
 
   private setupInput() {
@@ -243,6 +252,134 @@ export class GameScene extends Phaser.Scene {
     this.joystickVector = { x: dx / maxDist, y: dy / maxDist };
   }
 
+  private createHelpButton() {
+    this.helpBtn = this.add.circle(36, 36, 18, 0xffffff, 0.25)
+      .setScrollFactor(0).setDepth(1000).setInteractive({ useHandCursor: true });
+    this.helpLabel = this.add.text(36, 36, '?', {
+      fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+    // Click / tap: toggle and pin
+    this.helpBtn.on('pointerdown', () => {
+      if (this.helpPopupVisible) {
+        this.hideHelpPopup();
+      } else {
+        this.showHelpPopup();
+        this.helpPopupPinned = true;
+      }
+    });
+
+    // Desktop hover
+    if (!this.isTouchDevice) {
+      this.helpBtn.on('pointerover', () => {
+        if (!this.helpPopupVisible) {
+          this.showHelpPopup();
+        }
+      });
+      this.helpBtn.on('pointerout', () => {
+        if (this.helpPopupVisible && !this.helpPopupPinned) {
+          this.hideHelpPopup();
+        }
+      });
+    }
+  }
+
+  private showHelpPopup() {
+    if (this.helpPopupVisible) return;
+    this.helpPopupVisible = true;
+
+    const w = GAME_WIDTH;
+    const h = GAME_HEIGHT;
+
+    // Backdrop
+    const backdrop = this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0.6)
+      .setScrollFactor(0).setDepth(2000).setInteractive();
+    backdrop.on('pointerdown', () => this.hideHelpPopup());
+    this.helpPopupObjects.push(backdrop);
+
+    // Panel
+    const panelW = Math.min(320, w - 40);
+    const panelH = this.role === PlayerRole.Player2 ? 260 : 200;
+    const roleColor = this.role === PlayerRole.Player1 ? 0x4a90d9 : 0xe07a5f;
+    const panel = this.add.rectangle(w / 2, h / 2, panelW, panelH, 0x1a1a2e, 0.95)
+      .setScrollFactor(0).setDepth(2001).setStrokeStyle(2, roleColor);
+    this.helpPopupObjects.push(panel);
+
+    // Title
+    const title = this.add.text(w / 2, h / 2 - panelH / 2 + 24, 'Controls', {
+      fontSize: '20px', color: '#ffd700', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.helpPopupObjects.push(title);
+
+    // Role label
+    const roleLabel = this.role === PlayerRole.Player1
+      ? 'Player 1 (Striker)' : 'Player 2 (Carrier)';
+    const roleColorStr = this.role === PlayerRole.Player1 ? '#4a90d9' : '#e07a5f';
+    const roleTxt = this.add.text(w / 2, h / 2 - panelH / 2 + 50, roleLabel, {
+      fontSize: '14px', color: roleColorStr, fontFamily: 'monospace',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.helpPopupObjects.push(roleTxt);
+
+    // Controls text
+    const controls = this.getControlsText();
+    const controlsTxt = this.add.text(w / 2, h / 2 - panelH / 2 + 75, controls, {
+      fontSize: '13px', color: '#cccccc', fontFamily: 'monospace',
+      lineSpacing: 6, align: 'left',
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(2002);
+    this.helpPopupObjects.push(controlsTxt);
+
+    // Close X button
+    const closeBtn = this.add.text(w / 2 + panelW / 2 - 20, h / 2 - panelH / 2 + 10, 'X', {
+      fontSize: '18px', color: '#ff6b6b', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2002).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => this.hideHelpPopup());
+    this.helpPopupObjects.push(closeBtn);
+  }
+
+  private hideHelpPopup() {
+    for (const obj of this.helpPopupObjects) {
+      obj.destroy();
+    }
+    this.helpPopupObjects = [];
+    this.helpPopupVisible = false;
+    this.helpPopupPinned = false;
+  }
+
+  private getControlsText(): string {
+    if (this.role === PlayerRole.Player1) {
+      if (this.isTouchDevice) {
+        return [
+          'Move:    Joystick (left)',
+          'Jump:    ▲ button / flick up',
+          'Strike:  Bell button (right)',
+        ].join('\n');
+      }
+      return [
+        'Move:    A/D or ←/→',
+        'Jump:    W or ↑',
+        'Strike:  0 (near a bell)',
+      ].join('\n');
+    }
+
+    // Player 2
+    if (this.isTouchDevice) {
+      return [
+        'Move:    Joystick (left)',
+        'Jump:    ▲ button / flick up',
+        'Pick up: Action button (right)',
+        'Place:   Action button (carrying)',
+        'Notes:   Bottom row buttons',
+      ].join('\n');
+    }
+    return [
+      'Move:    A/D or ←/→',
+      'Jump:    W or ↑',
+      'Pick up: E (near a bell)',
+      'Place:   E (while carrying)',
+      'Notes:   6=宫 7=商 8=角 9=徵 0=羽',
+    ].join('\n');
+  }
+
   private setupNetwork() {
     this.networkManager.onMessage((message) => {
       switch (message.type) {
@@ -384,7 +521,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isTouchDevice && this.joystickActive) {
       body.setVelocityX(this.joystickVector.x * PLAYER_SPEED);
       // Jump via joystick pull-up
-      if (this.joystickVector.y < -0.5 && body.blocked.down && !this.joystickJumpFired) {
+      if (this.joystickVector.y < -0.5 && body.blocked.down && body.velocity.y >= 0 && !this.joystickJumpFired) {
         body.setVelocityY(PLAYER_JUMP_VELOCITY);
         this.joystickJumpFired = true;
       }
@@ -393,7 +530,7 @@ export class GameScene extends Phaser.Scene {
         this.joystickJumpFired = false;
       }
       // Also allow dedicated jump button
-      if (this.touchJumpRequested && body.blocked.down) {
+      if (this.touchJumpRequested && body.blocked.down && body.velocity.y >= 0) {
         body.setVelocityY(PLAYER_JUMP_VELOCITY);
         this.touchJumpRequested = false;
       }
@@ -401,7 +538,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Reset touch jump if using joystick but not moving
-    if (this.isTouchDevice && this.touchJumpRequested && body.blocked.down) {
+    if (this.isTouchDevice && this.touchJumpRequested && body.blocked.down && body.velocity.y >= 0) {
       body.setVelocityY(PLAYER_JUMP_VELOCITY);
       this.touchJumpRequested = false;
     }
@@ -416,7 +553,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Keyboard jump
-    if ((this.wasd?.W?.isDown || this.arrows?.UP?.isDown) && body.blocked.down) {
+    if ((this.wasd?.W?.isDown || this.arrows?.UP?.isDown) && body.blocked.down && body.velocity.y >= 0) {
       body.setVelocityY(PLAYER_JUMP_VELOCITY);
     }
   }
