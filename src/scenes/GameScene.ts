@@ -16,6 +16,7 @@ export class GameScene extends Phaser.Scene {
   private remotePlayer!: Phaser.Physics.Arcade.Sprite;
   private role!: PlayerRole;
   private wasd!: Record<string, Phaser.Input.Keyboard.Key>;
+  private arrows!: Record<string, Phaser.Input.Keyboard.Key>;
   private platforms!: Phaser.Physics.Arcade.StaticGroup;
   private bells!: Phaser.Physics.Arcade.StaticGroup;
   private moonGates!: Phaser.Physics.Arcade.StaticGroup;
@@ -80,6 +81,13 @@ export class GameScene extends Phaser.Scene {
       A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
       D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+    };
+
+    this.arrows = {
+      UP: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
+      LEFT: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
+      DOWN: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
+      RIGHT: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
     };
 
     // Strike key (Player 1: 0 key)
@@ -339,7 +347,8 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, this.levelData.width, this.levelData.height);
 
     // Camera follow for scrolling levels (especially important on mobile)
-    this.cameras.main.startFollow(this.localPlayer, true, 0.1, 0.1);
+    this.cameras.main.startFollow(this.localPlayer, true, 0.15, 0.2);
+    this.cameras.main.setDeadzone(40, 20);
     this.cameras.main.setBounds(0, 0, this.levelData.width, this.levelData.height);
   }
 
@@ -382,16 +391,16 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Keyboard movement
-    if (this.wasd?.A?.isDown) {
+    if (this.wasd?.A?.isDown || this.arrows?.LEFT?.isDown) {
       body.setVelocityX(-PLAYER_SPEED);
-    } else if (this.wasd?.D?.isDown) {
+    } else if (this.wasd?.D?.isDown || this.arrows?.RIGHT?.isDown) {
       body.setVelocityX(PLAYER_SPEED);
     } else if (!this.joystickActive) {
       body.setVelocityX(0);
     }
 
     // Keyboard jump
-    if (this.wasd?.W?.isDown && body.blocked.down) {
+    if ((this.wasd?.W?.isDown || this.arrows?.UP?.isDown) && body.blocked.down) {
       body.setVelocityY(PLAYER_JUMP_VELOCITY);
     }
   }
