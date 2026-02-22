@@ -50,15 +50,6 @@ export class BootScene extends Phaser.Scene {
     bell.generateTexture('bell', 16, 16);
     bell.destroy();
 
-    // Small bell indicator (carried on head)
-    const bellSmall = this.make.graphics({ x: 0, y: 0 }, false);
-    bellSmall.fillStyle(0xc9a84c);
-    bellSmall.fillRect(1, 0, 6, 1);   // hanging bar
-    bellSmall.fillRect(2, 1, 4, 5);   // bell body
-    bellSmall.fillRect(1, 5, 6, 3);   // bell flare
-    bellSmall.generateTexture('bell_small', 8, 8);
-    bellSmall.destroy();
-
     // Platform tile — slate gray stone
     const platform = this.make.graphics({ x: 0, y: 0 }, false);
     platform.fillStyle(0x6b7b8d);

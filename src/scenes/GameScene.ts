@@ -101,6 +101,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.createHelpButton();
+
+    // Sync carry indicators after physics so they stick to players
+    this.events.on('postupdate', () => {
+      this.updateCarriedBell();
+      this.updateRemoteCarryIndicator();
+    });
   }
 
   private setupInput() {
@@ -517,9 +523,7 @@ export class GameScene extends Phaser.Scene {
     this.handleMovement();
     this.handleActions();
     this.syncPosition(time);
-    this.updateCarriedBell();
     this.interpolateRemotePlayer();
-    this.updateRemoteCarryIndicator();
     this.updateAscension();
   }
 
@@ -648,7 +652,7 @@ export class GameScene extends Phaser.Scene {
   private placeBell() {
     if (!this.carriedBellId || !this.carriedBellSprite) return;
 
-    this.carriedBellSprite.setPosition(this.localPlayer.x, this.localPlayer.y + 20);
+    this.carriedBellSprite.setPosition(this.localPlayer.x, this.localPlayer.y);
     this.carriedBellSprite.setVisible(true);
     (this.carriedBellSprite.body as Phaser.Physics.Arcade.StaticBody).enable = true;
     this.carriedBellSprite.refreshBody();
@@ -793,7 +797,7 @@ export class GameScene extends Phaser.Scene {
   private updateCarriedBell() {
     if (this.carriedBellId && this.localPlayer) {
       if (!this.carriedBellIndicator) {
-        this.carriedBellIndicator = this.add.sprite(0, 0, 'bell_small');
+        this.carriedBellIndicator = this.add.sprite(0, 0, 'bell');
         this.carriedBellIndicator.setScale(PIXEL_SCALE);
         this.carriedBellIndicator.setDepth(999);
       }
@@ -807,7 +811,7 @@ export class GameScene extends Phaser.Scene {
   private updateRemoteCarryIndicator() {
     if (this.remoteCarryingBell && this.remotePlayer) {
       if (!this.remoteCarryIndicator) {
-        this.remoteCarryIndicator = this.add.sprite(0, 0, 'bell_small');
+        this.remoteCarryIndicator = this.add.sprite(0, 0, 'bell');
         this.remoteCarryIndicator.setScale(PIXEL_SCALE);
         this.remoteCarryIndicator.setDepth(999);
       }
@@ -816,6 +820,251 @@ export class GameScene extends Phaser.Scene {
     } else if (this.remoteCarryIndicator) {
       this.remoteCarryIndicator.setVisible(false);
     }
+  }
+
+  // --- Ascension Ceremony ---
+
+  private updateAscension() {
+    if (this.ascensionPhase === AscensionPhase.WaitingOnAltars) {
+      this.checkAltarOverlap();
+    }
+  }
+
+  private beginAscensionSequence() {
+    this.ascensionPhase = AscensionPhase.SparklesActive;
+
+    // Fade in altar sprites
+    for (const altarDef of this.levelData.altars) {
+      const textureKey = altarDef.forPlayer === PlayerRole.Player1 ? 'altar_p1' : 'altar_p2';
+      const altar = this.add.image(altarDef.position.x, altarDef.position.y, textureKey);
+      altar.setScale(PIXEL_SCALE);
+      altar.setAlpha(0);
+      altar.setDepth(0);
+      altar.setData('definition', altarDef);
+      this.altarSprites.push(altar);
+
+      // Fade in
+      this.tweens.add({
+        targets: altar,
+        alpha: 0.8,
+        duration: 800,
+        ease: 'Sine.easeIn',
+      });
+
+      // Pulsing glow
+      this.tweens.add({
+        targets: altar,
+        scaleX: PIXEL_SCALE * 1.1,
+        scaleY: PIXEL_SCALE * 1.1,
+        duration: 1000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    // Create sparkle emitters following both players
+    const localColor = this.role === PlayerRole.Player1 ? PLAYER1_COLOR : PLAYER2_COLOR;
+    const remoteColor = this.role === PlayerRole.Player1 ? PLAYER2_COLOR : PLAYER1_COLOR;
+
+    this.sparkleEmitterLocal = this.add.particles(0, 0, 'sparkle', {
+      follow: this.localPlayer,
+      frequency: 80,
+      lifespan: 800,
+      speed: { min: 20, max: 60 },
+      scale: { start: 1.5, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      tint: localColor,
+      blendMode: 'ADD',
+      emitting: true,
+    });
+    this.sparkleEmitterLocal.setDepth(998);
+
+    this.sparkleEmitterRemote = this.add.particles(0, 0, 'sparkle', {
+      follow: this.remotePlayer,
+      frequency: 80,
+      lifespan: 800,
+      speed: { min: 20, max: 60 },
+      scale: { start: 1.5, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      tint: remoteColor,
+      blendMode: 'ADD',
+      emitting: true,
+    });
+    this.sparkleEmitterRemote.setDepth(998);
+
+    // Transition to WaitingOnAltars after a short delay
+    this.time.delayedCall(500, () => {
+      if (this.ascensionPhase === AscensionPhase.SparklesActive) {
+        this.ascensionPhase = AscensionPhase.WaitingOnAltars;
+      }
+    });
+  }
+
+  private checkAltarOverlap() {
+    const myRole = this.role;
+    const myAltar = this.levelData.altars.find((a) => a.forPlayer === myRole);
+    if (!myAltar) return;
+
+    const dist = Phaser.Math.Distance.Between(
+      this.localPlayer.x, this.localPlayer.y,
+      myAltar.position.x, myAltar.position.y
+    );
+    const onAltar = dist < 30;
+
+    if (onAltar !== this.localOnAltar) {
+      this.localOnAltar = onAltar;
+      this.networkManager.send({
+        type: NetworkMessageType.AscensionPlayerOnAltar,
+        payload: { role: myRole, onAltar } as AscensionAltarPayload,
+        timestamp: Date.now(),
+      });
+
+      if (this.localOnAltar && this.remoteOnAltar) {
+        this.startLightBeamPhase();
+      }
+    }
+  }
+
+  private handleRemoteAltarState(payload: AscensionAltarPayload) {
+    this.remoteOnAltar = payload.onAltar;
+
+    if (this.ascensionPhase === AscensionPhase.WaitingOnAltars &&
+        this.localOnAltar && this.remoteOnAltar) {
+      this.startLightBeamPhase();
+    }
+  }
+
+  private startLightBeamPhase() {
+    this.ascensionPhase = AscensionPhase.LightBeamDown;
+    this.controlsDisabled = true;
+
+    // Zero velocity and disable gravity on local player
+    const localBody = this.localPlayer.body as Phaser.Physics.Arcade.Body;
+    localBody.setVelocity(0, 0);
+    localBody.allowGravity = false;
+
+    // Intensify sparkles
+    if (this.sparkleEmitterLocal) {
+      this.sparkleEmitterLocal.setFrequency(30);
+    }
+    if (this.sparkleEmitterRemote) {
+      this.sparkleEmitterRemote.setFrequency(30);
+    }
+
+    // Create light beams (tall colored rectangles above each player)
+    const beamWidth = 40;
+    const beamHeight = 300;
+    const localColor = this.role === PlayerRole.Player1 ? PLAYER1_COLOR : PLAYER2_COLOR;
+    const remoteColor = this.role === PlayerRole.Player1 ? PLAYER2_COLOR : PLAYER1_COLOR;
+
+    this.lightBeamLocal = this.add.rectangle(
+      this.localPlayer.x, this.localPlayer.y - beamHeight / 2,
+      beamWidth, beamHeight, localColor, 0
+    );
+    this.lightBeamLocal.setDepth(997);
+
+    this.lightBeamRemote = this.add.rectangle(
+      this.remotePlayer.x, this.remotePlayer.y - beamHeight / 2,
+      beamWidth, beamHeight, remoteColor, 0
+    );
+    this.lightBeamRemote.setDepth(997);
+
+    // Fade in light beams
+    this.tweens.add({
+      targets: [this.lightBeamLocal, this.lightBeamRemote],
+      alpha: 0.5,
+      duration: 1200,
+      ease: 'Sine.easeIn',
+      onComplete: () => {
+        // Hold for 400ms then start float
+        this.time.delayedCall(400, () => {
+          this.startFloatUp();
+        });
+      },
+    });
+  }
+
+  private startFloatUp() {
+    this.ascensionPhase = AscensionPhase.FloatingUp;
+
+    // Remove camera bounds so it can follow players above the level
+    this.cameras.main.removeBounds();
+
+    const floatDistance = 300;
+    const floatDuration = 2000;
+
+    // Float both players upward
+    this.tweens.add({
+      targets: this.localPlayer,
+      y: this.localPlayer.y - floatDistance,
+      duration: floatDuration,
+      ease: 'Sine.easeIn',
+    });
+
+    this.tweens.add({
+      targets: this.remotePlayer,
+      y: this.remotePlayer.y - floatDistance,
+      duration: floatDuration,
+      ease: 'Sine.easeIn',
+    });
+
+    // Float light beams up with players
+    if (this.lightBeamLocal) {
+      this.tweens.add({
+        targets: this.lightBeamLocal,
+        y: this.lightBeamLocal.y - floatDistance,
+        duration: floatDuration,
+        ease: 'Sine.easeIn',
+      });
+    }
+    if (this.lightBeamRemote) {
+      this.tweens.add({
+        targets: this.lightBeamRemote,
+        y: this.lightBeamRemote.y - floatDistance,
+        duration: floatDuration,
+        ease: 'Sine.easeIn',
+      });
+    }
+
+    // After float completes, transition out
+    this.time.delayedCall(floatDuration, () => {
+      this.startTransitionOut();
+    });
+  }
+
+  private startTransitionOut() {
+    this.ascensionPhase = AscensionPhase.TransitionOut;
+
+    this.cameras.main.fadeOut(800, 255, 255, 255);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.cleanupAscensionEffects();
+      this.advanceLevel();
+      this.cameras.main.fadeIn(800, 255, 255, 255);
+    });
+  }
+
+  private cleanupAscensionEffects() {
+    if (this.sparkleEmitterLocal) {
+      this.sparkleEmitterLocal.destroy();
+      this.sparkleEmitterLocal = null;
+    }
+    if (this.sparkleEmitterRemote) {
+      this.sparkleEmitterRemote.destroy();
+      this.sparkleEmitterRemote = null;
+    }
+    if (this.lightBeamLocal) {
+      this.lightBeamLocal.destroy();
+      this.lightBeamLocal = null;
+    }
+    if (this.lightBeamRemote) {
+      this.lightBeamRemote.destroy();
+      this.lightBeamRemote = null;
+    }
+    for (const altar of this.altarSprites) {
+      altar.destroy();
+    }
+    this.altarSprites = [];
   }
 
   private advanceLevel() {
