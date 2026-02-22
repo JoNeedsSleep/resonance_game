@@ -31,4 +31,10 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [BootScene, MenuScene, GameScene, EndScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+let resizeTimeout: ReturnType<typeof setTimeout>;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => game.scale.refresh(), 150);
+});
