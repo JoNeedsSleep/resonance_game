@@ -57,7 +57,6 @@ export class GameScene extends Phaser.Scene {
   private helpLabel: Phaser.GameObjects.Text | null = null;
   private helpPopupObjects: Phaser.GameObjects.GameObject[] = [];
   private helpPopupVisible = false;
-  private helpPopupPinned = false;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -259,29 +258,14 @@ export class GameScene extends Phaser.Scene {
       fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
-    // Click / tap: toggle and pin
+    // Click / tap: toggle popup
     this.helpBtn.on('pointerdown', () => {
       if (this.helpPopupVisible) {
         this.hideHelpPopup();
       } else {
         this.showHelpPopup();
-        this.helpPopupPinned = true;
       }
     });
-
-    // Desktop hover
-    if (!this.isTouchDevice) {
-      this.helpBtn.on('pointerover', () => {
-        if (!this.helpPopupVisible) {
-          this.showHelpPopup();
-        }
-      });
-      this.helpBtn.on('pointerout', () => {
-        if (this.helpPopupVisible && !this.helpPopupPinned) {
-          this.hideHelpPopup();
-        }
-      });
-    }
   }
 
   private showHelpPopup() {
@@ -342,7 +326,6 @@ export class GameScene extends Phaser.Scene {
     }
     this.helpPopupObjects = [];
     this.helpPopupVisible = false;
-    this.helpPopupPinned = false;
   }
 
   private getControlsText(): string {
