@@ -15,9 +15,9 @@ export const GAME_HEIGHT = IS_PORTRAIT ? Math.round(BASE_SIZE / aspect) : BASE_S
 export const PIXEL_SCALE = 3;
 
 /** Physics constants */
-export const GRAVITY = 800;
+export const GRAVITY = 1400;
 export const PLAYER_SPEED = 160;
-export const PLAYER_JUMP_VELOCITY = -350;
+export const PLAYER_JUMP_VELOCITY = -520;
 
 /** Player colors */
 export const PLAYER1_COLOR = 0x8ecae6; // Pastel blue
