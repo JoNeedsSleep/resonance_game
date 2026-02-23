@@ -14,12 +14,14 @@ export class MenuScene extends Phaser.Scene {
   private p1Btn: Phaser.GameObjects.Rectangle | null = null;
   private p2Btn: Phaser.GameObjects.Rectangle | null = null;
   private roomCodeOverlay: HTMLDivElement | null = null;
+  private connecting = false;
 
   constructor() {
     super({ key: 'MenuScene' });
   }
 
   create() {
+    this.connecting = false;
     const cx = GAME_WIDTH / 2;
     const cy = GAME_HEIGHT / 2;
 
@@ -134,22 +136,39 @@ export class MenuScene extends Phaser.Scene {
 
     reconnectBtn.on('pointerdown', () => {
       reconnectBtn.destroy();
-      this.selectRole(session.role);
+      if (session.role === PlayerRole.Player2) {
+        // Player 2: auto-connect using saved room code (skip input dialog)
+        this.disableButtons();
+        this.connectAsGuest(session.roomCode);
+      } else {
+        this.selectRole(session.role);
+      }
     });
   }
 
   private selectRole(role: PlayerRole) {
     // Disable buttons after selection
-    this.p1Btn?.disableInteractive();
-    this.p2Btn?.disableInteractive();
-    this.p1Btn?.setAlpha(0.4);
-    this.p2Btn?.setAlpha(0.4);
+    this.disableButtons();
 
     if (role === PlayerRole.Player1) {
       this.hostGame();
     } else {
       this.joinGame();
     }
+  }
+
+  private disableButtons() {
+    this.p1Btn?.disableInteractive();
+    this.p2Btn?.disableInteractive();
+    this.p1Btn?.setAlpha(0.4);
+    this.p2Btn?.setAlpha(0.4);
+  }
+
+  private enableButtons() {
+    this.p1Btn?.setInteractive();
+    this.p2Btn?.setInteractive();
+    this.p1Btn?.setAlpha(1);
+    this.p2Btn?.setAlpha(1);
   }
 
   private hostGame() {
@@ -166,21 +185,18 @@ export class MenuScene extends Phaser.Scene {
     this.networkManager.onConnected(() => {
       this.statusText?.setText('Connected!');
       this.hideRoomCodeOverlay();
-      // Brief delay so user sees "Connected!" before scene switch
-      this.time.delayedCall(500, () => {
+      // Use window.setTimeout instead of Phaser timer to avoid canvas-focus stalls
+      window.setTimeout(() => {
         this.scene.start('GameScene', {
           role: PlayerRole.Player1,
           networkManager: this.networkManager,
         });
-      });
+      }, 500);
     });
 
     this.networkManager.onError(() => {
       this.statusText?.setText('Connection error — refresh to retry');
-      this.p1Btn?.setInteractive();
-      this.p2Btn?.setInteractive();
-      this.p1Btn?.setAlpha(1);
-      this.p2Btn?.setAlpha(1);
+      this.enableButtons();
     });
 
     this.networkManager.connect();
@@ -192,7 +208,7 @@ export class MenuScene extends Phaser.Scene {
     // Create an HTML input for room code (works on mobile + desktop)
     const inputEl = document.createElement('input');
     inputEl.type = 'text';
-    inputEl.placeholder = 'Room code';
+    inputEl.placeholder = 'e.g. moon-stone-river';
     inputEl.autocomplete = 'off';
     inputEl.autocapitalize = 'off';
     inputEl.style.cssText = `
@@ -230,35 +246,12 @@ export class MenuScene extends Phaser.Scene {
     };
 
     const doConnect = () => {
+      if (this.connecting) return;
       const code = inputEl.value.trim();
       if (!code) return;
+      this.connecting = true;
       cleanup();
-
-      this.statusText?.setText('Connecting...');
-      this.roomCodeText?.setText(code);
-
-      this.networkManager = new NetworkManager(PlayerRole.Player2, code);
-
-      this.networkManager.onConnected(() => {
-        this.statusText?.setText('Connected!');
-        this.time.delayedCall(500, () => {
-          this.scene.start('GameScene', {
-            role: PlayerRole.Player2,
-            networkManager: this.networkManager,
-          });
-        });
-      });
-
-      this.networkManager.onError(() => {
-        this.statusText?.setText('Connection failed — refresh to retry');
-        this.roomCodeText?.setText('');
-        this.p1Btn?.setInteractive();
-        this.p2Btn?.setInteractive();
-        this.p1Btn?.setAlpha(1);
-        this.p2Btn?.setAlpha(1);
-      });
-
-      this.networkManager.connect();
+      this.connectAsGuest(code);
     };
 
     submitBtn.addEventListener('click', doConnect);
@@ -268,11 +261,48 @@ export class MenuScene extends Phaser.Scene {
     overlay.addEventListener('click', () => {
       cleanup();
       this.statusText?.setText('Connection cancelled');
-      this.p1Btn?.setInteractive();
-      this.p2Btn?.setInteractive();
-      this.p1Btn?.setAlpha(1);
-      this.p2Btn?.setAlpha(1);
+      this.enableButtons();
     });
+  }
+
+  /**
+   * Shared connection logic for Player 2, used by both joinGame input
+   * and the auto-reconnect path.
+   */
+  private connectAsGuest(code: string) {
+    this.statusText?.setText('Connecting...');
+    this.roomCodeText?.setText(code);
+
+    this.networkManager = new NetworkManager(PlayerRole.Player2, code);
+
+    this.networkManager.onConnected(() => {
+      this.statusText?.setText('Connected!');
+      // Use window.setTimeout instead of Phaser timer to avoid canvas-focus stalls
+      window.setTimeout(() => {
+        this.scene.start('GameScene', {
+          role: PlayerRole.Player2,
+          networkManager: this.networkManager,
+        });
+      }, 500);
+    });
+
+    this.networkManager.onError((err) => {
+      this.connecting = false;
+      const peerErr = err as Error & { type?: string };
+      let message = 'Connection failed — try again';
+      if (peerErr.type === 'peer-unavailable') {
+        message = 'Room not found — check the code';
+      } else if (peerErr.type === 'network') {
+        message = 'Network error — check your connection';
+      } else if (peerErr.type === 'timeout') {
+        message = 'Timed out — host may be offline';
+      }
+      this.statusText?.setText(message);
+      this.roomCodeText?.setText('');
+      this.enableButtons();
+    });
+
+    this.networkManager.connect();
   }
 
   private showRoomCodeOverlay(code: string) {
@@ -290,7 +320,7 @@ export class MenuScene extends Phaser.Scene {
     input.readOnly = true;
     input.style.cssText = `
       font-size: 20px; font-family: monospace; text-align: center;
-      padding: 8px 16px; width: 260px; max-width: 50vw;
+      padding: 8px 16px; width: 320px; max-width: 50vw;
       background: #2d3436; color: #ffd700; border: 2px solid #ffd700;
       border-radius: 8px; outline: none;
     `;

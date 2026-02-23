@@ -115,6 +115,7 @@ export enum NetworkMessageType {
   LevelComplete = 'level_complete',
   GameState = 'game_state',
   LevelLoad = 'level_load',
+  LevelRestart = 'level_restart',
 }
 
 export interface NetworkMessage {

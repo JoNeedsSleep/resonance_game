@@ -27,4 +27,10 @@ export const PLAYER2_COLOR = 0xe07a5f; // Warm orange-pink-red
 export const BELL_INTERACT_RANGE = 40;
 
 /** Network sync rate (ms between position updates) */
-export const NETWORK_SYNC_RATE = 50;
+export const NETWORK_SYNC_RATE = 16;
+
+/** Dead reckoning tuning constants */
+export const DEAD_RECKONING_LERP = 0.3;
+export const DEAD_RECKONING_SNAP_THRESHOLD = 150;
+export const SYNC_POSITION_THRESHOLD = 0.5;
+export const SYNC_VELOCITY_THRESHOLD = 1;

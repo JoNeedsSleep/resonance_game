@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS, AscensionPhase } from '../types';
 import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload, AscensionAltarPayload } from '../types';
-import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE, PLAYER1_COLOR, PLAYER2_COLOR } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE, PLAYER1_COLOR, PLAYER2_COLOR, DEAD_RECKONING_LERP, DEAD_RECKONING_SNAP_THRESHOLD, SYNC_POSITION_THRESHOLD, SYNC_VELOCITY_THRESHOLD } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
 import { levels } from '../levels';
@@ -31,6 +31,7 @@ export class GameScene extends Phaser.Scene {
   private solvedPuzzles: Set<string> = new Set();
   private strikeKey!: Phaser.Input.Keyboard.Key;
   private pickupKey!: Phaser.Input.Keyboard.Key;
+  private restartKey!: Phaser.Input.Keyboard.Key;
   private noteKeys: Record<string, Phaser.Input.Keyboard.Key> = {};
   private playedNoteSequence: PentatonicNote[] = [];
   private sequenceResetTimer: Phaser.Time.TimerEvent | null = null;
@@ -45,10 +46,19 @@ export class GameScene extends Phaser.Scene {
   private touchJumpRequested = false;
   private joystickJumpFired = false;
 
-  // Remote player interpolation
+  // Remote player interpolation + dead reckoning
   private remoteTargetX = 0;
   private remoteTargetY = 0;
   private remoteTargetInitialized = false;
+  private remoteVelocityX = 0;
+  private remoteVelocityY = 0;
+  private lastRemoteUpdateTime = 0;
+
+  // Dirty-check state for sync throttling
+  private lastSentX = 0;
+  private lastSentY = 0;
+  private lastSentVX = 0;
+  private lastSentVY = 0;
 
   private touchActionBtn: Phaser.GameObjects.Arc | null = null;
   private touchActionLabel: Phaser.GameObjects.Text | null = null;
@@ -64,6 +74,10 @@ export class GameScene extends Phaser.Scene {
   private helpLabel: Phaser.GameObjects.Text | null = null;
   private helpPopupObjects: Phaser.GameObjects.GameObject[] = [];
   private helpPopupVisible = false;
+
+  // Reconnection overlay
+  private reconnectOverlay: Phaser.GameObjects.GameObject[] = [];
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Ascension ceremony
   private ascensionPhase: AscensionPhase = AscensionPhase.Inactive;
@@ -132,6 +146,9 @@ export class GameScene extends Phaser.Scene {
     this.strikeKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ZERO);
     // Pickup key (Player 2: E key)
     this.pickupKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+
+    // Restart key
+    this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
 
     // Note keys for Player 2: 6-0 map to 宫商角徵羽
     this.noteKeys = {
@@ -365,6 +382,7 @@ export class GameScene extends Phaser.Scene {
         'Move:    A/D or ←/→',
         'Jump:    W or ↑',
         'Strike:  0 (near a bell)',
+        'Restart: R',
       ].join('\n');
     }
 
@@ -384,6 +402,7 @@ export class GameScene extends Phaser.Scene {
       'Pick up: E (near a bell)',
       'Place:   E (while carrying)',
       'Notes:   6=宫 7=商 8=角 9=徵 0=羽',
+      'Restart: R',
     ].join('\n');
   }
 
@@ -411,22 +430,109 @@ export class GameScene extends Phaser.Scene {
         case NetworkMessageType.LevelComplete:
           this.advanceLevel();
           break;
+        case NetworkMessageType.LevelRestart:
+          this.restartLevel();
+          break;
       }
     });
 
     this.networkManager.onDisconnect(() => {
-      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'Connection lost', {
-        fontSize: '24px',
-        color: '#ff6b6b',
-        fontFamily: 'monospace',
-        backgroundColor: '#1a1a2e',
-        padding: { x: 20, y: 10 },
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(2000);
-
-      this.time.delayedCall(2000, () => {
-        this.scene.start('MenuScene');
-      });
+      this.showReconnectOverlay();
     });
+  }
+
+  private showReconnectOverlay() {
+    this.clearReconnectOverlay();
+    this.controlsDisabled = true;
+
+    const w = GAME_WIDTH;
+    const h = GAME_HEIGHT;
+
+    // Semi-transparent backdrop
+    const backdrop = this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0.6)
+      .setScrollFactor(0).setDepth(3000);
+    this.reconnectOverlay.push(backdrop);
+
+    // Title
+    const title = this.add.text(w / 2, h / 2 - 50, 'Connection Lost', {
+      fontSize: '24px',
+      color: '#ff6b6b',
+      fontFamily: 'monospace',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(3001);
+    this.reconnectOverlay.push(title);
+
+    // Status text
+    const statusText = this.add.text(w / 2, h / 2, 'Reconnecting...', {
+      fontSize: '14px',
+      color: '#aaaaaa',
+      fontFamily: 'monospace',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(3001);
+    this.reconnectOverlay.push(statusText);
+
+    // Return to Menu button
+    const menuBtn = this.add.text(w / 2, h / 2 + 50, '[ Return to Menu ]', {
+      fontSize: '14px',
+      color: '#4ecca3',
+      fontFamily: 'monospace',
+      backgroundColor: '#2d3436',
+      padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(3001)
+      .setInteractive({ useHandCursor: true });
+    this.reconnectOverlay.push(menuBtn);
+
+    menuBtn.on('pointerdown', () => {
+      this.clearReconnectOverlay();
+      this.scene.start('MenuScene');
+    });
+
+    // Auto-retry with exponential backoff: 1s, 2s, 4s, 8s
+    const delays = [1000, 2000, 4000, 8000];
+    let attempt = 0;
+
+    // Re-register the connect callback for reconnection
+    this.networkManager.onConnected(() => {
+      // Reconnected successfully
+      if (this.reconnectTimeoutId !== null) {
+        clearTimeout(this.reconnectTimeoutId);
+        this.reconnectTimeoutId = null;
+      }
+      this.clearReconnectOverlay();
+      this.controlsDisabled = false;
+    });
+
+    const tryReconnect = () => {
+      if (attempt >= delays.length) {
+        statusText.setText('Could not reconnect');
+        return;
+      }
+      statusText.setText(`Reconnecting... (${attempt + 1}/${delays.length})`);
+      this.reconnectTimeoutId = setTimeout(() => {
+        this.reconnectTimeoutId = null;
+        if (this.networkManager.isConnected()) return;
+        this.networkManager.attemptReconnect();
+        attempt++;
+        // Schedule next retry
+        if (attempt < delays.length && !this.networkManager.isConnected()) {
+          tryReconnect();
+        } else if (attempt >= delays.length && !this.networkManager.isConnected()) {
+          statusText.setText('Could not reconnect');
+        }
+      }, delays[attempt]);
+    };
+
+    tryReconnect();
+  }
+
+  private clearReconnectOverlay() {
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    for (const obj of this.reconnectOverlay) {
+      obj.destroy();
+    }
+    this.reconnectOverlay = [];
   }
 
   private loadLevel(index: number) {
@@ -441,6 +547,13 @@ export class GameScene extends Phaser.Scene {
     this.carriedBellId = null;
     this.carriedBellSprite = null;
     this.remoteTargetInitialized = false;
+    this.remoteVelocityX = 0;
+    this.remoteVelocityY = 0;
+    this.lastRemoteUpdateTime = 0;
+    this.lastSentX = 0;
+    this.lastSentY = 0;
+    this.lastSentVX = 0;
+    this.lastSentVY = 0;
     this.remoteCarryingBell = false;
     this.cleanupAscensionEffects();
     this.ascensionPhase = AscensionPhase.Inactive;
@@ -538,10 +651,23 @@ export class GameScene extends Phaser.Scene {
     if (!this.remotePlayer || !this.remoteTargetInitialized) return;
     if (this.ascensionPhase === AscensionPhase.FloatingUp || this.ascensionPhase === AscensionPhase.TransitionOut) return;
 
-    const lerpFactor = 0.25;
-    const newX = Phaser.Math.Linear(this.remotePlayer.x, this.remoteTargetX, lerpFactor);
-    const newY = Phaser.Math.Linear(this.remotePlayer.y, this.remoteTargetY, lerpFactor);
-    this.remotePlayer.setPosition(newX, newY);
+    // Dead reckoning: extrapolate from last known position using velocity
+    const elapsed = (performance.now() - this.lastRemoteUpdateTime) / 1000;
+    const predictedX = this.remoteTargetX + this.remoteVelocityX * elapsed;
+    const predictedY = this.remoteTargetY + this.remoteVelocityY * elapsed;
+
+    const dx = predictedX - this.remotePlayer.x;
+    const dy = predictedY - this.remotePlayer.y;
+    const error = Math.sqrt(dx * dx + dy * dy);
+
+    if (error > DEAD_RECKONING_SNAP_THRESHOLD) {
+      // Teleport / level load — snap immediately
+      this.remotePlayer.setPosition(predictedX, predictedY);
+    } else {
+      const newX = Phaser.Math.Linear(this.remotePlayer.x, predictedX, DEAD_RECKONING_LERP);
+      const newY = Phaser.Math.Linear(this.remotePlayer.y, predictedY, DEAD_RECKONING_LERP);
+      this.remotePlayer.setPosition(newX, newY);
+    }
   }
 
   private handleMovement() {
@@ -593,6 +719,17 @@ export class GameScene extends Phaser.Scene {
 
   private handleActions() {
     if (this.controlsDisabled) return;
+
+    // Restart level
+    if (this.restartKey && Phaser.Input.Keyboard.JustDown(this.restartKey)) {
+      this.networkManager.send({
+        type: NetworkMessageType.LevelRestart,
+        payload: {},
+        timestamp: Date.now(),
+      });
+      this.restartLevel();
+      return;
+    }
 
     // Player 1: Strike bell (keyboard)
     if (this.role === PlayerRole.Player1 && this.strikeKey && Phaser.Input.Keyboard.JustDown(this.strikeKey)) {
@@ -758,6 +895,9 @@ export class GameScene extends Phaser.Scene {
 
     this.remoteTargetX = payload.position.x;
     this.remoteTargetY = payload.position.y;
+    this.remoteVelocityX = payload.velocityX;
+    this.remoteVelocityY = payload.velocityY;
+    this.lastRemoteUpdateTime = performance.now();
 
     // Snap directly on the first update to avoid lerping from 0,0
     if (!this.remoteTargetInitialized) {
@@ -826,10 +966,26 @@ export class GameScene extends Phaser.Scene {
 
   private syncPosition(time: number) {
     if (time - this.lastSyncTime < NETWORK_SYNC_RATE) return;
-    this.lastSyncTime = time;
 
     if (!this.localPlayer?.body) return;
     const body = this.localPlayer.body as Phaser.Physics.Arcade.Body;
+
+    // Dirty-check: skip sending if position and velocity barely changed
+    const dx = Math.abs(this.localPlayer.x - this.lastSentX);
+    const dy = Math.abs(this.localPlayer.y - this.lastSentY);
+    const dvx = Math.abs(body.velocity.x - this.lastSentVX);
+    const dvy = Math.abs(body.velocity.y - this.lastSentVY);
+
+    if (dx < SYNC_POSITION_THRESHOLD && dy < SYNC_POSITION_THRESHOLD &&
+        dvx < SYNC_VELOCITY_THRESHOLD && dvy < SYNC_VELOCITY_THRESHOLD) {
+      return;
+    }
+
+    this.lastSyncTime = time;
+    this.lastSentX = this.localPlayer.x;
+    this.lastSentY = this.localPlayer.y;
+    this.lastSentVX = body.velocity.x;
+    this.lastSentVY = body.velocity.y;
 
     this.networkManager.send({
       type: NetworkMessageType.PlayerMove,
@@ -1115,6 +1271,10 @@ export class GameScene extends Phaser.Scene {
       altar.destroy();
     }
     this.altarSprites = [];
+  }
+
+  private restartLevel() {
+    this.loadLevel(this.currentLevel);
   }
 
   private advanceLevel() {

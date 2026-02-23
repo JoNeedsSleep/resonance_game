@@ -1,11 +1,15 @@
 import Peer, { DataConnection } from 'peerjs';
 import { PlayerRole, NetworkMessage } from '../types';
+import { generateRoomCode } from '../utils/roomCode';
 
 type MessageHandler = (message: NetworkMessage) => void;
 
 const SESSION_KEY_HOST_ID = 'resonance_host_id';
 const SESSION_KEY_ROLE = 'resonance_role';
 const SESSION_KEY_ROOM = 'resonance_room_code';
+
+const MAX_HOST_RETRIES = 5;
+const JOIN_TIMEOUT_MS = 10000;
 
 /**
  * Manages peer-to-peer connection via PeerJS.
@@ -25,6 +29,7 @@ export class NetworkManager {
   private onDisconnectCallback: (() => void) | null = null;
   private visibilityHandler: (() => void) | null = null;
   private beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
+  private joinTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   constructor(role: PlayerRole, roomCode: string | null) {
     this.role = role;
@@ -77,12 +82,33 @@ export class NetworkManager {
     return this.peer?.id ?? this.roomCode;
   }
 
+  getRole(): PlayerRole {
+    return this.role;
+  }
+
   disconnect() {
+    this.clearJoinTimeout();
     this.removeEventListeners();
     this.connection?.close();
     this.peer?.destroy();
     this.connected = false;
     NetworkManager.clearSavedSession();
+  }
+
+  /**
+   * Attempt to reconnect after a connection loss.
+   * Destroys the old peer cleanly and re-runs hostGame or joinGame.
+   */
+  attemptReconnect() {
+    this.clearJoinTimeout();
+    this.removeEventListeners();
+    this.connection?.close();
+    this.peer?.destroy();
+    this.peer = null;
+    this.connection = null;
+    this.connected = false;
+
+    this.connect();
   }
 
   /** Check for a previously saved session (survives page reload) */
@@ -104,7 +130,16 @@ export class NetworkManager {
   private hostGame() {
     // Reuse previous peer ID if available (allows reconnection after reload)
     const savedHostId = sessionStorage.getItem(SESSION_KEY_HOST_ID);
-    this.peer = savedHostId ? new Peer(savedHostId) : new Peer();
+    const hostId = savedHostId || generateRoomCode();
+    this.initHostPeer(hostId, 0);
+  }
+
+  /**
+   * Creates a host peer with the given ID. On `unavailable-id` error,
+   * generates a new word code and retries up to MAX_HOST_RETRIES times.
+   */
+  private initHostPeer(hostId: string, retryCount: number) {
+    this.peer = new Peer(hostId);
 
     this.peer.on('open', (id) => {
       sessionStorage.setItem(SESSION_KEY_HOST_ID, id);
@@ -119,25 +154,10 @@ export class NetworkManager {
     });
 
     this.peer.on('error', (err) => {
-      // If saved peer ID is taken, clear it and retry with a fresh ID
-      if (savedHostId && err.type === 'unavailable-id') {
+      if (err.type === 'unavailable-id' && retryCount < MAX_HOST_RETRIES) {
+        this.peer?.destroy();
         NetworkManager.clearSavedSession();
-        this.peer = new Peer();
-        this.peer.on('open', (id) => {
-          sessionStorage.setItem(SESSION_KEY_HOST_ID, id);
-          sessionStorage.setItem(SESSION_KEY_ROLE, this.role);
-          sessionStorage.setItem(SESSION_KEY_ROOM, id);
-          this.onOpenCallback?.(id);
-        });
-        this.peer.on('connection', (conn) => {
-          this.connection = conn;
-          this.setupConnection(conn);
-        });
-        this.peer.on('error', (retryErr) => {
-          // eslint-disable-next-line no-console
-          console.error('PeerJS error:', retryErr);
-          this.onErrorCallback?.(retryErr);
-        });
+        this.initHostPeer(generateRoomCode(), retryCount + 1);
         return;
       }
       // eslint-disable-next-line no-console
@@ -161,9 +181,19 @@ export class NetworkManager {
       const conn = this.peer!.connect(this.roomCode!);
       this.connection = conn;
       this.setupConnection(conn);
+
+      // Timeout if connection doesn't open within JOIN_TIMEOUT_MS
+      this.joinTimeoutId = setTimeout(() => {
+        if (!this.connected) {
+          const err = new Error('Connection timed out — host may be offline');
+          (err as Error & { type: string }).type = 'timeout';
+          this.onErrorCallback?.(err);
+        }
+      }, JOIN_TIMEOUT_MS);
     });
 
     this.peer.on('error', (err) => {
+      this.clearJoinTimeout();
       // eslint-disable-next-line no-console
       console.error('PeerJS error:', err);
       this.onErrorCallback?.(err);
@@ -174,6 +204,7 @@ export class NetworkManager {
 
   private setupConnection(conn: DataConnection) {
     conn.on('open', () => {
+      this.clearJoinTimeout();
       this.connected = true;
       this.onConnectCallback?.();
       this.addBeforeUnloadHandler();
@@ -191,6 +222,13 @@ export class NetworkManager {
       this.removeBeforeUnloadHandler();
       this.onDisconnectCallback?.();
     });
+  }
+
+  private clearJoinTimeout() {
+    if (this.joinTimeoutId !== null) {
+      clearTimeout(this.joinTimeoutId);
+      this.joinTimeoutId = null;
+    }
   }
 
   private setupVisibilityHandler() {
