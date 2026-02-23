@@ -27,6 +27,9 @@ const config: Phaser.Types.Core.GameConfig = {
   input: {
     activePointers: 3, // Support multi-touch for joystick + buttons
   },
+  fps: {
+    forceSetTimeOut: true,
+  },
   backgroundColor: '#1a1a2e',
   scene: [BootScene, MenuScene, GameScene, EndScene],
 };

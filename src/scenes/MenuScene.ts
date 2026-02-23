@@ -187,6 +187,7 @@ export class MenuScene extends Phaser.Scene {
       this.hideRoomCodeOverlay();
       // Use window.setTimeout instead of Phaser timer to avoid canvas-focus stalls
       window.setTimeout(() => {
+        this.game.resume();
         this.scene.start('GameScene', {
           role: PlayerRole.Player1,
           networkManager: this.networkManager,
@@ -279,6 +280,7 @@ export class MenuScene extends Phaser.Scene {
       this.statusText?.setText('Connected!');
       // Use window.setTimeout instead of Phaser timer to avoid canvas-focus stalls
       window.setTimeout(() => {
+        this.game.resume();
         this.scene.start('GameScene', {
           role: PlayerRole.Player2,
           networkManager: this.networkManager,
