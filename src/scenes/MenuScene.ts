@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT } from '../config';
 import { PlayerRole } from '../types';
 import { NetworkManager } from '../network/NetworkManager';
 
@@ -37,27 +37,17 @@ export class MenuScene extends Phaser.Scene {
     bg.fillTriangle(w * 0.63, h, w * 0.83, h * 0.33, w, h);
 
     // Title
-    this.add.text(cx, IS_PORTRAIT ? 80 : 60, 'Mountain Ascent', {
-      fontSize: IS_PORTRAIT ? '32px' : '28px',
+    this.add.text(cx, 60, 'Mountain Ascent', {
+      fontSize: '28px',
       color: '#ffffff',
       fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    // Button layout — side-by-side on landscape, stacked on portrait
     const btnSize = 140;
-    let p1X: number, p1Y: number, p2X: number, p2Y: number;
-
-    if (IS_PORTRAIT) {
-      p1X = cx;
-      p1Y = cy - 110;
-      p2X = cx;
-      p2Y = cy + 90;
-    } else {
-      p1X = cx - 120;
-      p1Y = cy - 20;
-      p2X = cx + 120;
-      p2Y = cy - 20;
-    }
+    const p1X = cx - 120;
+    const p1Y = cy - 20;
+    const p2X = cx + 120;
+    const p2Y = cy - 20;
 
     // Player 1 button (blue)
     this.p1Btn = this.add.rectangle(p1X, p1Y, btnSize, btnSize, 0x8ecae6, 0.8)
@@ -90,7 +80,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Info text area — below buttons
-    const infoY = IS_PORTRAIT ? cy + 210 : cy + 120;
+    const infoY = cy + 120;
 
     // Room code display
     this.roomCodeText = this.add.text(cx, infoY, '', {
@@ -119,7 +109,7 @@ export class MenuScene extends Phaser.Scene {
 
   private showReconnectPrompt(session: { role: PlayerRole; roomCode: string }) {
     const cx = GAME_WIDTH / 2;
-    const infoY = IS_PORTRAIT ? GAME_HEIGHT / 2 + 210 : GAME_HEIGHT / 2 + 120;
+    const infoY = GAME_HEIGHT / 2 + 120;
 
     this.statusText?.setText(
       `Previous session (${session.role === PlayerRole.Player1 ? 'Host' : 'Guest'})`

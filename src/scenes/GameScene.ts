@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { PlayerRole, NetworkMessageType, PentatonicNote, NOTE_LABELS, AscensionPhase } from '../types';
 import type { LevelData, PlayerMovePayload, BellStrikePayload, BellCarryPayload, AscensionAltarPayload } from '../types';
-import { GAME_WIDTH, GAME_HEIGHT, IS_PORTRAIT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE, PLAYER1_COLOR, PLAYER2_COLOR, DEAD_RECKONING_LERP, DEAD_RECKONING_SNAP_THRESHOLD, SYNC_POSITION_THRESHOLD, SYNC_VELOCITY_THRESHOLD } from '../config';
+import { GAME_WIDTH, GAME_HEIGHT, PLAYER_SPEED, PLAYER_JUMP_VELOCITY, BELL_INTERACT_RANGE, NETWORK_SYNC_RATE, PIXEL_SCALE, PLAYER1_COLOR, PLAYER2_COLOR, DEAD_RECKONING_LERP, DEAD_RECKONING_SNAP_THRESHOLD, SYNC_POSITION_THRESHOLD, SYNC_VELOCITY_THRESHOLD } from '../config';
 import { NetworkManager } from '../network/NetworkManager';
 import { AudioManager } from '../audio/AudioManager';
 import { levels } from '../levels';
@@ -43,7 +43,6 @@ export class GameScene extends Phaser.Scene {
   private joystickActive = false;
   private joystickVector = { x: 0, y: 0 };
   private joystickPointerId: number | null = null;
-  private touchJumpRequested = false;
   private joystickJumpFired = false;
 
   // Remote player interpolation + dead reckoning
@@ -161,9 +160,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupTouchControls() {
-    const uiCamera = this.cameras.add(0, 0, GAME_WIDTH, GAME_HEIGHT);
-    uiCamera.setScroll(0, 0);
-
     // --- Virtual Joystick (left side) ---
     const joyX = 100;
     const joyY = GAME_HEIGHT - 100;
@@ -174,15 +170,6 @@ export class GameScene extends Phaser.Scene {
     this.joystickThumb = this.add.circle(joyX, joyY, thumbRadius, 0xffffff, 0.4);
     this.joystickBase.setScrollFactor(0).setDepth(1000);
     this.joystickThumb.setScrollFactor(0).setDepth(1001);
-
-    // Jump button (above joystick)
-    const jumpBtn = this.add.circle(joyX + 90, joyY - 50, 30, 0x8ecae6, 0.3)
-      .setScrollFactor(0).setDepth(1000).setInteractive();
-    this.add.text(joyX + 90, joyY - 50, '▲', {
-      fontSize: '20px', color: '#8ecae6',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
-
-    jumpBtn.on('pointerdown', () => { this.touchJumpRequested = true; });
 
     // Joystick touch handling — use scene-level pointer events
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -250,7 +237,7 @@ export class GameScene extends Phaser.Scene {
         { key: PentatonicNote.Yu, label: NOTE_LABELS[PentatonicNote.Yu] },
       ];
 
-      const noteSpacing = IS_PORTRAIT ? 44 : 52;
+      const noteSpacing = 52;
       const noteBlockWidth = (notes.length - 1) * noteSpacing;
       const noteStartX = GAME_WIDTH - 40 - noteBlockWidth;
       const noteY = GAME_HEIGHT - 30;
@@ -374,7 +361,7 @@ export class GameScene extends Phaser.Scene {
       if (this.isTouchDevice) {
         return [
           'Move:    Joystick (left)',
-          'Jump:    ▲ button / flick up',
+          'Jump:    Flick joystick up',
           'Strike:  Bell button (right)',
         ].join('\n');
       }
@@ -390,7 +377,7 @@ export class GameScene extends Phaser.Scene {
     if (this.isTouchDevice) {
       return [
         'Move:    Joystick (left)',
-        'Jump:    ▲ button / flick up',
+        'Jump:    Flick joystick up',
         'Pick up: Action button (right)',
         'Place:   Action button (carrying)',
         'Notes:   Bottom row buttons',
@@ -688,18 +675,7 @@ export class GameScene extends Phaser.Scene {
       if (this.joystickVector.y >= -0.3) {
         this.joystickJumpFired = false;
       }
-      // Also allow dedicated jump button
-      if (this.touchJumpRequested && body.blocked.down && body.velocity.y >= 0) {
-        body.setVelocityY(PLAYER_JUMP_VELOCITY);
-        this.touchJumpRequested = false;
-      }
       return;
-    }
-
-    // Reset touch jump if using joystick but not moving
-    if (this.isTouchDevice && this.touchJumpRequested && body.blocked.down && body.velocity.y >= 0) {
-      body.setVelocityY(PLAYER_JUMP_VELOCITY);
-      this.touchJumpRequested = false;
     }
 
     // Keyboard movement
